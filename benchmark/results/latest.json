@@ -112,6 +112,34 @@
     "source_file": "2026-02-27_072850.json"
   },
   {
+    "name": "fastconformer-quran-lm-fusion",
+    "recall": 0.9111111111111112,
+    "precision": 0.9259259259259259,
+    "sequence_accuracy": 0.9074074074074074,
+    "total": 54,
+    "avg_latency": 0.8686279760721071,
+    "model_size": 120586240,
+    "timestamp": "2026-03-01_205150",
+    "mode": "full",
+    "category": null,
+    "chunk_seconds": null,
+    "source_file": "2026-03-01_205150.json"
+  },
+  {
+    "name": "fastconformer-quran-lm-fusion",
+    "recall": 0.9411764705882353,
+    "precision": 0.9411764705882353,
+    "sequence_accuracy": 0.9411764705882353,
+    "total": 17,
+    "avg_latency": 0.18092199759420885,
+    "model_size": 120586240,
+    "timestamp": "2026-03-01_171632",
+    "mode": "full",
+    "category": "short",
+    "chunk_seconds": null,
+    "source_file": "2026-03-01_171632.json"
+  },
+  {
     "name": "moonshine-lora",
     "recall": 0.5138888888888888,
     "precision": 0.5370370370370371,
@@ -295,17 +323,17 @@
   },
   {
     "name": "nvidia-fastconformer",
-    "recall": 0.8823529411764706,
-    "precision": 0.8823529411764706,
-    "sequence_accuracy": 0.8823529411764706,
+    "recall": 1.0,
+    "precision": 1.0,
+    "sequence_accuracy": 1.0,
     "total": 17,
-    "avg_latency": 0.16010713952966718,
+    "avg_latency": 0.21022823299555218,
     "model_size": 120586240,
-    "timestamp": "2026-02-26_222839",
+    "timestamp": "2026-03-01_170330",
     "mode": "full",
     "category": "short",
     "chunk_seconds": null,
-    "source_file": "2026-02-26_222839.json"
+    "source_file": "2026-03-01_170330.json"
   },
   {
     "name": "rabah-pruned-ctc/12-layer-ft-es-int8",
