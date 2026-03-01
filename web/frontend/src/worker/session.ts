@@ -3,20 +3,13 @@ import * as ort from "onnxruntime-web";
 let session: ort.InferenceSession | null = null;
 
 export async function createSession(modelBuffer: ArrayBuffer): Promise<void> {
-  // Try WebGPU first, fall back to WASM
-  const providers: string[] = [];
-  if (typeof navigator !== "undefined" && "gpu" in navigator) {
-    try {
-      const adapter = await (navigator as any).gpu.requestAdapter();
-      if (adapter) providers.push("webgpu");
-    } catch {
-      // WebGPU not available
-    }
-  }
-  providers.push("wasm");
-
+  // Configure WASM paths — files are copied to public/ via postinstall
+  ort.env.wasm.wasmPaths = "/";
   ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4;
   ort.env.wasm.simd = true;
+
+  // Use WASM backend (WebGPU support in onnxruntime-web is still experimental)
+  const providers: string[] = ["wasm"];
 
   session = await ort.InferenceSession.create(modelBuffer, {
     executionProviders: providers,

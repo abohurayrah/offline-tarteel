@@ -25,6 +25,12 @@ export default defineConfig({
       },
     }),
   ],
+  worker: {
+    format: "es",
+  },
+  optimizeDeps: {
+    exclude: ["onnxruntime-web"],
+  },
   server: {
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",
