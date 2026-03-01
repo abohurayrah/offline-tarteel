@@ -7,8 +7,7 @@ import { RecitationTracker } from "../lib/tracker";
 import { normalizeArabic } from "../lib/normalizer";
 import type { WorkerInbound, WorkerOutbound } from "../lib/types";
 
-const MODEL_URL =
-  "https://github.com/yazinsai/offline-tarteel/releases/download/v0.1.0/fastconformer_ar_ctc_q8.onnx";
+const MODEL_URL = "/fastconformer_ar_ctc_q8.onnx";
 
 let tracker: RecitationTracker | null = null;
 let decoder: CTCDecoder | null = null;

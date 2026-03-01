@@ -44,6 +44,7 @@ const state = {
   stream: null as MediaStream | null,
   isActive: false,
   hasFirstMatch: false,
+  modelReady: false,
   surahCache: new Map<number, SurahData>(),
   quranData: null as QuranVerse[] | null,
 };
@@ -57,6 +58,9 @@ const $indicator = document.getElementById("listening-indicator")!;
 const $permissionPrompt = document.getElementById("permission-prompt")!;
 const $listeningStatus = document.getElementById("listening-status")!;
 const $modelStatus = document.getElementById("model-status")!;
+const $loadingStatus = document.getElementById("loading-status")!;
+const $loadingProgress = document.getElementById("loading-progress")!;
+const $loadingDetail = document.getElementById("loading-detail")!;
 
 // ---------------------------------------------------------------------------
 // Arabic numeral converter
@@ -337,9 +341,16 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
   if (msg.type === "loading") {
     $modelStatus.textContent = `Loading model... ${msg.percent}%`;
     $modelStatus.classList.remove("ready");
+    $loadingProgress.style.width = `${msg.percent}%`;
+    $loadingDetail.textContent = `Downloading model — ${msg.percent}%`;
   } else if (msg.type === "ready") {
     $modelStatus.textContent = "Model ready";
     $modelStatus.classList.add("ready");
+    state.modelReady = true;
+    $loadingStatus.hidden = true;
+    if (state.stream) {
+      $listeningStatus.hidden = false;
+    }
   } else if (msg.type === "verse_match") {
     handleVerseMatch(msg);
   } else if (msg.type === "word_progress") {
@@ -363,7 +374,9 @@ async function startAudio(): Promise<void> {
     });
     state.stream = stream;
     $permissionPrompt.hidden = true;
-    $listeningStatus.hidden = false;
+    if (state.modelReady) {
+      $listeningStatus.hidden = false;
+    }
 
     const audioCtx = new AudioContext();
     state.audioCtx = audioCtx;

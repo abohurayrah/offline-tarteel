@@ -47,6 +47,44 @@ body {
   position: relative;
 }
 
+/* ── Loading status ── */
+#loading-status {
+  text-align: center;
+  padding: 4rem 1rem 2rem;
+  animation: fade-in 0.6s ease-out;
+}
+
+#loading-status .loading-status-main {
+  font-family: var(--font-system);
+  font-size: 1.5rem;
+  color: var(--text-light);
+  margin-bottom: 1.25rem;
+  letter-spacing: 0.02em;
+}
+
+.loading-progress-track {
+  width: 200px;
+  height: 4px;
+  margin: 0 auto 0.75rem;
+  background: var(--accent-warm);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.loading-progress-fill {
+  width: 0%;
+  height: 100%;
+  background: #b8986a;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+#loading-status .loading-status-sub {
+  font-family: var(--font-system);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
 /* ── Listening status ── */
 #listening-status {
   text-align: center;

@@ -8,6 +8,13 @@
   </head>
   <body>
     <div id="app">
+      <div id="loading-status">
+        <p class="loading-status-main">Preparing model...</p>
+        <div class="loading-progress-track">
+          <div class="loading-progress-fill" id="loading-progress"></div>
+        </div>
+        <p class="loading-status-sub" id="loading-detail">Downloading</p>
+      </div>
       <div id="listening-status" hidden>
         <p class="listening-status-main">Listening...</p>
         <p class="listening-status-sub">Begin your recitation</p>
