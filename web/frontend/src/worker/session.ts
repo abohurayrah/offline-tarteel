@@ -3,8 +3,9 @@ import * as ort from "onnxruntime-web/wasm";
 let session: ort.InferenceSession | null = null;
 
 export async function createSession(modelBuffer: ArrayBuffer): Promise<void> {
-  // Let onnxruntime-web resolve WASM files from its own location in node_modules
-  ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4;
+  // Multi-threading requires SharedArrayBuffer (needs COOP/COEP headers)
+  const canThread = typeof SharedArrayBuffer !== "undefined";
+  ort.env.wasm.numThreads = canThread ? (navigator.hardwareConcurrency || 4) : 1;
   ort.env.wasm.simd = true;
 
   // Use WASM backend (WebGPU support in onnxruntime-web is still experimental)
