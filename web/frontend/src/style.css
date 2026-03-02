@@ -524,6 +524,103 @@ body {
   background: var(--accent-warm);
 }
 
+/* ── Report dialog ── */
+#report-dialog {
+  border: none;
+  border-radius: 12px;
+  padding: 0;
+  max-width: 480px;
+  width: calc(100% - 2rem);
+  background: var(--bg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+#report-dialog::backdrop {
+  background: rgba(44, 36, 22, 0.4);
+  backdrop-filter: blur(4px);
+}
+
+.dialog-content {
+  padding: 1.5rem;
+}
+
+.dialog-title {
+  font-family: var(--font-system);
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 1.25rem;
+}
+
+.dialog-section {
+  margin-bottom: 1rem;
+}
+
+.dialog-label {
+  display: block;
+  font-family: var(--font-system);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.4rem;
+}
+
+.verse-selectors {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.verse-selectors select {
+  flex: 1;
+  padding: 0.5rem;
+  border: 1px solid rgba(200, 190, 170, 0.4);
+  border-radius: 6px;
+  background: var(--bg-warm);
+  font-family: var(--font-system);
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.prediction-text {
+  font-family: var(--font-system);
+  font-size: 0.9rem;
+  color: var(--text-light);
+  font-style: italic;
+}
+
+#report-notes {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid rgba(200, 190, 170, 0.4);
+  border-radius: 6px;
+  background: var(--bg-warm);
+  font-family: var(--font-system);
+  font-size: 0.9rem;
+  color: var(--text);
+  resize: vertical;
+}
+
+#report-audio {
+  width: 100%;
+  height: 40px;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 1.25rem;
+}
+
+.report-status {
+  font-family: var(--font-system);
+  font-size: 0.85rem;
+  color: var(--text-light);
+  text-align: center;
+  margin-top: 0.75rem;
+}
+
 /* ── Responsive ── */
 @media (max-width: 960px) {
   .verse-body {

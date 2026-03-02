@@ -48,6 +48,42 @@
         <span class="badge-sep">&middot;</span>
         100% offline — no data leaves your device
       </div>
+
+      <dialog id="report-dialog">
+        <div class="dialog-content">
+          <h2 class="dialog-title">Report Error</h2>
+
+          <div class="dialog-section">
+            <label class="dialog-label">Your recording</label>
+            <audio id="report-audio" controls></audio>
+          </div>
+
+          <div class="dialog-section">
+            <label class="dialog-label">What were you reciting?</label>
+            <div class="verse-selectors">
+              <select id="report-surah"></select>
+              <select id="report-ayah"></select>
+            </div>
+          </div>
+
+          <div class="dialog-section">
+            <label class="dialog-label">Model predicted</label>
+            <p id="report-prediction" class="prediction-text"></p>
+          </div>
+
+          <div class="dialog-section">
+            <label class="dialog-label">Notes (optional)</label>
+            <textarea id="report-notes" rows="3" placeholder="Describe the issue..."></textarea>
+          </div>
+
+          <div class="dialog-actions">
+            <button id="btn-submit-report" class="action-btn action-btn--report">Submit</button>
+            <button id="btn-cancel-report" class="action-btn action-btn--restart">Cancel</button>
+          </div>
+
+          <p id="report-status" class="report-status" hidden></p>
+        </div>
+      </dialog>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -2,6 +2,8 @@ import "@fontsource/amiri/400.css";
 import "@fontsource/amiri/700.css";
 import "./style.css";
 
+import { initSurahDropdown, openReportDialog } from "./report-dialog";
+
 import type {
   VerseMatchMessage,
   RawTranscriptMessage,
@@ -89,6 +91,7 @@ async function loadQuranData(): Promise<void> {
   if (state.quranData) return;
   const res = await fetch("/quran.json");
   state.quranData = await res.json();
+  initSurahDropdown(state.quranData);
 }
 
 async function fetchSurah(surahNum: number): Promise<SurahData> {
@@ -506,10 +509,10 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   $btnReport.addEventListener("click", () => {
-    // Placeholder — Task 6 will implement the dialog
-    console.log("Report error clicked", {
-      chunks: state.sessionAudioChunks.length,
-      prediction: state.lastModelPrediction,
+    openReportDialog({
+      audioChunks: state.sessionAudioChunks,
+      modelPrediction: state.lastModelPrediction,
+      quranData: state.quranData!,
     });
   });
 });
