@@ -445,6 +445,85 @@ body {
   50% { opacity: 1; }
 }
 
+/* ── Recording controls ── */
+#ready-state, #recording-state, #post-recording {
+  text-align: center;
+  padding: 2rem 1rem;
+  animation: fade-in 0.4s ease-out;
+}
+
+.ready-prompt {
+  font-family: var(--font-system);
+  font-size: 1.1rem;
+  color: var(--text-muted);
+  margin-bottom: 1.5rem;
+}
+
+.rec-btn {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-system);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.rec-btn:active {
+  transform: scale(0.95);
+}
+
+.rec-btn--start {
+  background: #b8986a;
+  color: #fff;
+  box-shadow: 0 2px 12px rgba(184, 152, 106, 0.3);
+}
+
+.rec-btn--stop {
+  background: #c0564b;
+  color: #fff;
+  box-shadow: 0 2px 12px rgba(192, 86, 75, 0.3);
+}
+
+.post-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.action-btn {
+  padding: 0.6rem 1.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--accent-warm-strong);
+  font-family: var(--font-system);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.action-btn--report {
+  background: var(--accent-warm);
+  color: var(--text);
+}
+
+.action-btn--report:hover {
+  background: var(--accent-warm-strong);
+}
+
+.action-btn--restart {
+  background: transparent;
+  color: var(--text-light);
+  border-color: rgba(200, 190, 170, 0.3);
+}
+
+.action-btn--restart:hover {
+  background: var(--accent-warm);
+}
+
 /* ── Responsive ── */
 @media (max-width: 960px) {
   .verse-body {

@@ -19,6 +19,19 @@
         <p class="listening-status-main">Listening...</p>
         <p class="listening-status-sub">Begin your recitation</p>
       </div>
+      <div id="ready-state" hidden>
+        <p class="ready-prompt">Tap to begin recitation</p>
+        <button id="btn-start" class="rec-btn rec-btn--start">Start</button>
+      </div>
+      <div id="recording-state" hidden>
+        <button id="btn-stop" class="rec-btn rec-btn--stop">Stop</button>
+      </div>
+      <div id="post-recording" hidden>
+        <div class="post-actions">
+          <button id="btn-report" class="action-btn action-btn--report">Report Error</button>
+          <button id="btn-restart" class="action-btn action-btn--restart">Start Again</button>
+        </div>
+      </div>
       <div id="verses"></div>
       <div id="raw-transcript"></div>
       <div id="listening-indicator">

@@ -47,6 +47,8 @@ const state = {
   modelReady: false,
   surahCache: new Map<number, SurahData>(),
   quranData: null as QuranVerse[] | null,
+  sessionAudioChunks: [] as Float32Array[],
+  lastModelPrediction: null as { surah: number; ayah: number; confidence: number } | null,
 };
 
 // ---------------------------------------------------------------------------
@@ -61,6 +63,13 @@ const $modelStatus = document.getElementById("model-status")!;
 const $loadingStatus = document.getElementById("loading-status")!;
 const $loadingProgress = document.getElementById("loading-progress")!;
 const $loadingDetail = document.getElementById("loading-detail")!;
+const $readyState = document.getElementById("ready-state")!;
+const $recordingState = document.getElementById("recording-state")!;
+const $postRecording = document.getElementById("post-recording")!;
+const $btnStart = document.getElementById("btn-start")!;
+const $btnStop = document.getElementById("btn-stop")!;
+const $btnReport = document.getElementById("btn-report")!;
+const $btnRestart = document.getElementById("btn-restart")!;
 
 // ---------------------------------------------------------------------------
 // Arabic numeral converter
@@ -249,6 +258,8 @@ async function handleVerseMatch(msg: VerseMatchMessage): Promise<void> {
   $rawTranscript.textContent = "";
   $rawTranscript.classList.remove("visible");
 
+  state.lastModelPrediction = { surah: msg.surah, ayah: msg.ayah, confidence: msg.confidence };
+
   if (!state.hasFirstMatch) {
     state.hasFirstMatch = true;
     $listeningStatus.hidden = true;
@@ -348,9 +359,7 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
     $modelStatus.classList.add("ready");
     state.modelReady = true;
     $loadingStatus.hidden = true;
-    if (state.stream) {
-      $listeningStatus.hidden = false;
-    }
+    $readyState.hidden = false;
   } else if (msg.type === "verse_match") {
     handleVerseMatch(msg);
   } else if (msg.type === "word_progress") {
@@ -374,9 +383,6 @@ async function startAudio(): Promise<void> {
     });
     state.stream = stream;
     $permissionPrompt.hidden = true;
-    if (state.modelReady) {
-      $listeningStatus.hidden = false;
-    }
 
     const audioCtx = new AudioContext();
     state.audioCtx = audioCtx;
@@ -386,8 +392,11 @@ async function startAudio(): Promise<void> {
     const processor = new AudioWorkletNode(audioCtx, "audio-stream-processor");
 
     processor.port.onmessage = (e: MessageEvent) => {
+      const samples = new Float32Array(e.data as ArrayBuffer);
+      // Save copy to session buffer
+      state.sessionAudioChunks.push(samples.slice());
+      // Send to worker for recognition
       if (state.worker) {
-        const samples = new Float32Array(e.data as ArrayBuffer);
         state.worker.postMessage(
           { type: "audio", samples },
           [samples.buffer],
@@ -429,6 +438,22 @@ async function startAudio(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Stop audio capture
+// ---------------------------------------------------------------------------
+function stopAudio(): void {
+  if (state.stream) {
+    state.stream.getTracks().forEach((t) => t.stop());
+    state.stream = null;
+  }
+  if (state.audioCtx) {
+    state.audioCtx.close();
+    state.audioCtx = null;
+  }
+  state.isActive = false;
+  $indicator.classList.remove("active", "audio-detected", "silence", "has-verses");
+}
+
+// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 document.addEventListener("DOMContentLoaded", () => {
@@ -446,6 +471,45 @@ document.addEventListener("DOMContentLoaded", () => {
   // Initialize worker (loads model, vocab, quranDB)
   worker.postMessage({ type: "init" });
 
-  // Start audio capture
-  startAudio();
+  // Button handlers
+  $btnStart.addEventListener("click", async () => {
+    $readyState.hidden = true;
+    $recordingState.hidden = false;
+    state.sessionAudioChunks = [];
+    state.lastModelPrediction = null;
+    state.hasFirstMatch = false;
+    state.groups = [];
+    $verses.innerHTML = "";
+    $rawTranscript.textContent = "";
+    $rawTranscript.classList.remove("visible");
+    // Reset tracker in worker
+    state.worker?.postMessage({ type: "reset" });
+    await startAudio();
+  });
+
+  $btnStop.addEventListener("click", () => {
+    stopAudio();
+    $recordingState.hidden = true;
+    $postRecording.hidden = false;
+  });
+
+  $btnRestart.addEventListener("click", () => {
+    state.sessionAudioChunks = [];
+    state.lastModelPrediction = null;
+    state.hasFirstMatch = false;
+    state.groups = [];
+    $verses.innerHTML = "";
+    $rawTranscript.textContent = "";
+    $rawTranscript.classList.remove("visible");
+    $postRecording.hidden = true;
+    $readyState.hidden = false;
+  });
+
+  $btnReport.addEventListener("click", () => {
+    // Placeholder — Task 6 will implement the dialog
+    console.log("Report error clicked", {
+      chunks: state.sessionAudioChunks.length,
+      prediction: state.lastModelPrediction,
+    });
+  });
 });

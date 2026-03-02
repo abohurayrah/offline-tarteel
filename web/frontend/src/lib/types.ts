@@ -36,7 +36,8 @@ export interface SurroundingVerse {
 // Main -> Worker
 export type WorkerInbound =
   | { type: "init" }
-  | { type: "audio"; samples: Float32Array };
+  | { type: "audio"; samples: Float32Array }
+  | { type: "reset" };
 
 // Worker -> Main
 export type WorkerOutbound =

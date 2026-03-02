@@ -11,6 +11,7 @@ const MODEL_URL = "/fastconformer_ar_ctc_q8.onnx";
 
 let tracker: RecitationTracker | null = null;
 let decoder: CTCDecoder | null = null;
+let db: QuranDB | null = null;
 
 function post(msg: WorkerOutbound) {
   self.postMessage(msg);
@@ -49,7 +50,7 @@ async function init() {
   // Load QuranDB
   const quranRes = await fetch("/quran.json");
   const quranData = await quranRes.json();
-  const db = new QuranDB(quranData);
+  db = new QuranDB(quranData);
 
   // Create tracker
   tracker = new RecitationTracker(db, transcribe);
@@ -60,6 +61,10 @@ self.onmessage = async (e: MessageEvent<WorkerInbound>) => {
   const msg = e.data;
   if (msg.type === "init") {
     await init();
+  } else if (msg.type === "reset") {
+    if (db) {
+      tracker = new RecitationTracker(db, transcribe);
+    }
   } else if (msg.type === "audio") {
     if (!tracker) return;
     const messages = await tracker.feed(msg.samples);
