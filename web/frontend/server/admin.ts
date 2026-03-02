@@ -1,0 +1,88 @@
+import { Hono } from "hono";
+import { getCookie, setCookie } from "hono/cookie";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+const STORAGE_DIR = process.env.STORAGE_DIR || "./storage/reports";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "tarteel-admin";
+
+export const adminApp = new Hono();
+
+// Auth check
+function isAuthed(c: any): boolean {
+  return getCookie(c, "admin_auth") === "1";
+}
+
+// Login page
+adminApp.get("/login", (c) => {
+  const error = c.req.query("error") ? "<p style='color:#c0564b'>Wrong password</p>" : "";
+  return c.html(`<!DOCTYPE html>
+<html><head><title>Admin Login</title>
+<style>body{font-family:system-ui;background:#faf8f3;display:flex;justify-content:center;align-items:center;height:100vh}
+form{background:#fff;padding:2rem;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.08);text-align:center}
+input{display:block;margin:0.5rem auto;padding:0.5rem;border:1px solid #ddd;border-radius:6px;font-size:1rem}
+button{margin-top:0.5rem;padding:0.5rem 1.5rem;background:#b8986a;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:1rem}</style>
+</head><body>
+<form method="POST" action="/admin/login">
+  <h2>Admin</h2>${error}
+  <input type="password" name="password" placeholder="Password" autofocus>
+  <button type="submit">Login</button>
+</form></body></html>`);
+});
+
+adminApp.post("/login", async (c) => {
+  const form = await c.req.formData();
+  const pw = form.get("password") as string;
+  if (pw === ADMIN_PASSWORD) {
+    setCookie(c, "admin_auth", "1", { path: "/admin", httpOnly: true, maxAge: 86400 });
+    return c.redirect("/admin");
+  }
+  return c.redirect("/admin/login?error=1");
+});
+
+// Admin dashboard
+adminApp.get("/", async (c) => {
+  if (!isAuthed(c)) return c.redirect("/admin/login");
+
+  let reports: any[] = [];
+  try {
+    const entries = await readdir(STORAGE_DIR);
+    for (const entry of entries) {
+      try {
+        const raw = await readFile(join(STORAGE_DIR, entry, "meta.json"), "utf-8");
+        reports.push(JSON.parse(raw));
+      } catch { /* skip */ }
+    }
+    reports.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  } catch { /* empty */ }
+
+  const rows = reports.map(r => `
+    <tr>
+      <td>${new Date(r.timestamp).toLocaleString()}</td>
+      <td>Surah ${r.surah}, Ayah ${r.ayah}</td>
+      <td>${r.modelPrediction || "—"}</td>
+      <td>${r.notes ? r.notes.slice(0, 80) : "—"}</td>
+      <td><audio controls src="/api/reports/${r.id}/audio" preload="none"></audio></td>
+    </tr>`).join("");
+
+  return c.html(`<!DOCTYPE html>
+<html><head><title>Error Reports</title>
+<style>
+body{font-family:system-ui;background:#faf8f3;padding:2rem;max-width:1100px;margin:0 auto}
+h1{color:#2c2416;margin-bottom:1rem;font-size:1.4rem}
+.count{color:#8a7e6b;font-size:0.9rem;margin-bottom:1.5rem}
+table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 6px rgba(0,0,0,0.06)}
+th{background:#f5f0e8;color:#2c2416;padding:0.75rem;text-align:left;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.04em}
+td{padding:0.75rem;border-top:1px solid #f0ebe3;font-size:0.9rem;color:#2c2416;vertical-align:middle}
+audio{height:32px;width:200px}
+tr:hover td{background:#faf8f3}
+.empty{text-align:center;padding:3rem;color:#8a7e6b}
+</style></head><body>
+<h1>Error Reports</h1>
+<p class="count">${reports.length} report${reports.length !== 1 ? "s" : ""}</p>
+${reports.length ? `<table>
+<thead><tr><th>Time</th><th>Expected Verse</th><th>Model Predicted</th><th>Notes</th><th>Audio</th></tr></thead>
+<tbody>${rows}</tbody>
+</table>` : "<p class='empty'>No reports yet.</p>"}
+</body></html>`);
+});
