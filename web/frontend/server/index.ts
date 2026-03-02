@@ -1,11 +1,15 @@
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { reportsApp } from "./reports.js";
 
 const app = new Hono();
 
-// API routes will go here
+// API routes
 app.get("/api/health", (c) => c.json({ ok: true }));
+
+// Mount reports API
+app.route("/api/reports", reportsApp);
 
 // Serve static files from Vite build
 app.use("/*", serveStatic({ root: "./dist" }));
