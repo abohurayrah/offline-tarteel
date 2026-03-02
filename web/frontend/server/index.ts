@@ -23,6 +23,12 @@ app.use("*", async (c, next) => {
 // API routes
 app.get("/api/health", (c) => c.json({ ok: true }));
 
+// Cache-bust endpoint to clear stale service workers
+app.get("/api/clear-cache", (c) => {
+  c.header("Clear-Site-Data", '"cache", "storage"');
+  return c.json({ cleared: true });
+});
+
 // Mount reports API
 app.route("/api/reports", reportsApp);
 

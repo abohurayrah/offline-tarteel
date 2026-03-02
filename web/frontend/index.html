@@ -85,6 +85,17 @@
         </div>
       </dialog>
     </div>
+    <script>
+      // Unregister old service worker that cached stale assets
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          for (var r of regs) r.unregister();
+        });
+        caches.keys().then(function (keys) {
+          for (var k of keys) caches.delete(k);
+        });
+      }
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
