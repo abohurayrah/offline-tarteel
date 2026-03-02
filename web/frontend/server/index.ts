@@ -6,6 +6,13 @@ import { reportsApp } from "./reports.js";
 
 const app = new Hono();
 
+// Add COOP/COEP headers for SharedArrayBuffer support (needed by ONNX WASM threads)
+app.use("*", async (c, next) => {
+  await next();
+  c.header("Cross-Origin-Opener-Policy", "same-origin");
+  c.header("Cross-Origin-Embedder-Policy", "require-corp");
+});
+
 // API routes
 app.get("/api/health", (c) => c.json({ ok: true }));
 
