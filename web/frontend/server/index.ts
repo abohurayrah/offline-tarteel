@@ -6,11 +6,18 @@ import { reportsApp } from "./reports.js";
 
 const app = new Hono();
 
-// Add COOP/COEP headers for SharedArrayBuffer support (needed by ONNX WASM threads)
+// COOP/COEP for SharedArrayBuffer + cache control
 app.use("*", async (c, next) => {
   await next();
   c.header("Cross-Origin-Opener-Policy", "same-origin");
   c.header("Cross-Origin-Embedder-Policy", "require-corp");
+
+  const path = new URL(c.req.url).pathname;
+  if (path === "/sw.js" || path === "/index.html" || path === "/") {
+    c.header("Cache-Control", "no-cache, no-store, must-revalidate");
+  } else if (path.startsWith("/assets/")) {
+    c.header("Cache-Control", "public, max-age=31536000, immutable");
+  }
 });
 
 // API routes
