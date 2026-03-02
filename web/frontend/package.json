@@ -6,14 +6,19 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:server": "npx esbuild server/index.ts --bundle --platform=node --format=esm --outfile=dist-server/index.mjs --packages=external",
+    "start": "node dist-server/index.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
     "@fontsource/amiri": "^5.2.8",
+    "@hono/node-server": "^1.19.9",
     "@huggingface/transformers": "^3.8.1",
+    "hono": "^4.12.3",
     "onnxruntime-web": "^1.24.2"
   },
   "devDependencies": {
+    "esbuild": "^0.27.3",
     "typescript": "~5.9.3",
     "vite": "^7.3.1",
     "vite-plugin-pwa": "^1.2.0"
