@@ -91,8 +91,6 @@ benchmark/               # Evaluation framework
 
 data/                    # Reference data
   quran.json             # 6,236 verses (uthmani + cleaned text)
-  reference_audio/       # EveryAyah samples (Alafasy)
-  test_audio/            # User recordings
 
 web/                     # Live demo
   server.py              # FastAPI backend
@@ -243,6 +241,12 @@ Head-to-head benchmark of 8 ASR models. Key finding: Moonshine Tiny Arabic (103 
 | RetaSy crowdsourced | 29 | Curated subset from 1,287 speakers across 81 countries |
 
 **Categories:** short (17), medium (19), long (9), multi (9).
+
+All audio files are tracked in the repository. To regenerate the EveryAyah long/multi samples from scratch (downloads from everyayah.com):
+
+```bash
+.venv/bin/python scripts/add_long_multi_samples.py
+```
 
 ## Running benchmarks
 

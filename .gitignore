@@ -27,9 +27,13 @@ data/rabah-ctc-pruned-8/
 data/rabah-ctc-pruned-12/
 data/rabah-ctc-pruned-*-finetuned/
 data/rabah-ctc-source/
+*.onnx
+
+# Audio files (large, except benchmark test corpus which must be tracked)
 *.m4a
 *.wav
-*.onnx
+!benchmark/test_corpus/*.m4a
+!benchmark/test_corpus/*.wav
 node_modules/
 .worktrees/
 
