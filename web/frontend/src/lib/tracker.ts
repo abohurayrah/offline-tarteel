@@ -315,13 +315,13 @@ export class RecitationTracker {
     if (match && match.score >= effectiveThreshold) {
       const ref: [number, number] = [match.surah, match.ayah];
 
-      // Ambiguity guard: when top candidates share a long prefix and the
-      // transcription hasn't clearly gone beyond it, wait for more text
-      // instead of committing to a potentially wrong verse.
+      // Ambiguity guard: only suppress when scores are nearly identical
+      // and the transcript hasn't clearly differentiated the verses.
+      // Tracking mode already recovers from misidentification (stale→revert),
+      // so this guard should be very conservative to avoid blocking detection.
       const runnersUp: Record<string, any>[] = match.runners_up ?? [];
       if (runnersUp.length >= 2) {
         const matchVerse = this.db.getVerse(match.surah, match.ayah);
-        // Find a runner-up from a different verse
         let altRunner: Record<string, any> | null = null;
         for (const ru of runnersUp) {
           if (ru.surah !== match.surah || ru.ayah !== match.ayah) {
@@ -329,7 +329,8 @@ export class RecitationTracker {
             break;
           }
         }
-        if (altRunner && altRunner.score >= runnersUp[0].score * 0.85) {
+        // Only guard when alt is within 3% of top score (was 15%)
+        if (altRunner && altRunner.score >= runnersUp[0].score * 0.97) {
           const altVerse = this.db.getVerse(altRunner.surah, altRunner.ayah);
           if (matchVerse && altVerse) {
             const w1 = matchVerse.text_clean.split(" ");
@@ -343,10 +344,10 @@ export class RecitationTracker {
               if (w1[i] === w2[i]) sharedPrefix++;
               else break;
             }
-            if (sharedPrefix >= 5) {
+            // Require longer shared prefix (8+ words) and very short text
+            if (sharedPrefix >= 8) {
               const textWords = text.split(" ").length;
-              if (textWords <= sharedPrefix + 4) {
-                // Still in the ambiguous zone — show raw transcript, wait
+              if (textWords <= sharedPrefix + 2) {
                 messages.push({
                   type: "raw_transcript",
                   text,
