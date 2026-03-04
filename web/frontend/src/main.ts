@@ -39,6 +39,15 @@ interface VerseGroup {
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
+interface DiagnosticEvent {
+  timestamp: number;
+  type: string;
+  data: Record<string, unknown>;
+}
+
+const MAX_DIAGNOSTIC_EVENTS = 50;
+const DIAGNOSTIC_COOLDOWN_MS = 30_000;
+
 const state = {
   groups: [] as VerseGroup[],
   worker: null as Worker | null,
@@ -51,6 +60,9 @@ const state = {
   quranData: null as QuranVerse[] | null,
   sessionAudioChunks: [] as Float32Array[],
   lastModelPrediction: null as { surah: number; ayah: number; confidence: number } | null,
+  diagnosticEvents: [] as DiagnosticEvent[],
+  lastDiagnosticSentAt: 0,
+  recentVerseMatches: [] as { surah: number; ayah: number; timestamp: number }[],
 };
 
 // ---------------------------------------------------------------------------
@@ -349,6 +361,112 @@ function handleRawTranscript(msg: RawTranscriptMessage): void {
 }
 
 // ---------------------------------------------------------------------------
+// Diagnostics
+// ---------------------------------------------------------------------------
+function pushDiagnosticEvent(type: string, data: Record<string, unknown>): void {
+  state.diagnosticEvents.push({ timestamp: Date.now(), type, data });
+  if (state.diagnosticEvents.length > MAX_DIAGNOSTIC_EVENTS) {
+    state.diagnosticEvents.shift();
+  }
+}
+
+function checkAnomalyAndSend(msg: VerseMatchMessage): void {
+  const now = Date.now();
+
+  // Track recent verse matches for rapid switching detection
+  state.recentVerseMatches.push({ surah: msg.surah, ayah: msg.ayah, timestamp: now });
+  // Keep only last 10 seconds
+  state.recentVerseMatches = state.recentVerseMatches.filter(
+    (m) => now - m.timestamp < 10_000,
+  );
+
+  let trigger: string | null = null;
+
+  // Surah jump: different surah than previous match
+  const prev = state.lastModelPrediction;
+  if (prev && prev.surah !== msg.surah) {
+    trigger = "surah_jump";
+  }
+
+  // Rapid switching: 3+ different verses in 10 seconds
+  if (!trigger) {
+    const unique = new Set(
+      state.recentVerseMatches.map((m) => `${m.surah}:${m.ayah}`),
+    );
+    if (unique.size >= 3) {
+      trigger = "rapid_switching";
+    }
+  }
+
+  if (!trigger) return;
+
+  // Cooldown
+  if (now - state.lastDiagnosticSentAt < DIAGNOSTIC_COOLDOWN_MS) return;
+  state.lastDiagnosticSentAt = now;
+
+  sendDiagnosticReport(trigger);
+}
+
+async function sendDiagnosticReport(trigger: string): Promise<void> {
+  try {
+    // Build audio WAV from session chunks
+    const totalLen = state.sessionAudioChunks.reduce((s, c) => s + c.length, 0);
+    const merged = new Float32Array(totalLen);
+    let offset = 0;
+    for (const chunk of state.sessionAudioChunks) {
+      merged.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    // Only send last 30s of audio max
+    const maxSamples = 16000 * 30;
+    const audioSlice = merged.length > maxSamples ? merged.slice(-maxSamples) : merged;
+    const wavBlob = float32ToWav(audioSlice, 16000);
+
+    const form = new FormData();
+    form.append("audio", wavBlob, "diagnostic.wav");
+    form.append("events", JSON.stringify(state.diagnosticEvents));
+    form.append("trigger", trigger);
+
+    await fetch("/api/diagnostics", { method: "POST", body: form });
+  } catch (err) {
+    console.error("Failed to send diagnostic report:", err);
+  }
+}
+
+function float32ToWav(samples: Float32Array, sampleRate: number): Blob {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+
+  function writeStr(off: number, str: string) {
+    for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i));
+  }
+
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+
+  let off = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    off += 2;
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+// ---------------------------------------------------------------------------
 // Worker message handler
 // ---------------------------------------------------------------------------
 function handleWorkerMessage(msg: WorkerOutbound): void {
@@ -370,10 +488,21 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
     $loadingStatus.hidden = true;
     $readyState.hidden = false;
   } else if (msg.type === "verse_match") {
+    pushDiagnosticEvent("verse_match", {
+      surah: msg.surah, ayah: msg.ayah, confidence: msg.confidence,
+    });
+    checkAnomalyAndSend(msg);
     handleVerseMatch(msg);
   } else if (msg.type === "word_progress") {
+    pushDiagnosticEvent("word_progress", {
+      surah: msg.surah, ayah: msg.ayah,
+      word_index: msg.word_index, total_words: msg.total_words,
+    });
     handleWordProgress(msg);
   } else if (msg.type === "raw_transcript") {
+    pushDiagnosticEvent("raw_transcript", {
+      text: msg.text, confidence: msg.confidence,
+    });
     handleRawTranscript(msg);
   }
 }
@@ -493,6 +622,8 @@ document.addEventListener("DOMContentLoaded", () => {
     state.lastModelPrediction = null;
     state.hasFirstMatch = false;
     state.groups = [];
+    state.diagnosticEvents = [];
+    state.recentVerseMatches = [];
     $verses.innerHTML = "";
     $rawTranscript.textContent = "";
     $rawTranscript.classList.remove("visible");

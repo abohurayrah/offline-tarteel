@@ -4,6 +4,9 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const STORAGE_DIR = process.env.STORAGE_DIR || "./storage/reports";
+const DIAGNOSTICS_DIR = process.env.STORAGE_DIR
+  ? join(process.env.STORAGE_DIR, "../diagnostics")
+  : "./storage/diagnostics";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "tarteel-admin";
 
 export const adminApp = new Hono();
@@ -56,6 +59,18 @@ adminApp.get("/", async (c) => {
     reports.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   } catch { /* empty */ }
 
+  let diagnostics: any[] = [];
+  try {
+    const entries = await readdir(DIAGNOSTICS_DIR);
+    for (const entry of entries) {
+      try {
+        const raw = await readFile(join(DIAGNOSTICS_DIR, entry, "meta.json"), "utf-8");
+        diagnostics.push(JSON.parse(raw));
+      } catch { /* skip */ }
+    }
+    diagnostics.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  } catch { /* empty */ }
+
   const rows = reports.map(r => `
     <tr>
       <td>${new Date(r.timestamp).toLocaleString()}</td>
@@ -65,18 +80,34 @@ adminApp.get("/", async (c) => {
       <td><audio controls src="/api/reports/${r.id}/audio" preload="none"></audio></td>
     </tr>`).join("");
 
+  const triggerLabel = (t: string) =>
+    t === "surah_jump" ? "Surah Jump" : t === "rapid_switching" ? "Rapid Switching" : t;
+
+  const diagRows = diagnostics.map(d => `
+    <tr>
+      <td>${new Date(d.timestamp).toLocaleString()}</td>
+      <td><span class="trigger-badge trigger-${d.trigger}">${triggerLabel(d.trigger)}</span></td>
+      <td>${Array.isArray(d.events) ? d.events.length : 0}</td>
+      <td>${d.hasAudio ? `<audio controls src="/api/diagnostics/${d.id}/audio" preload="none"></audio>` : "—"}</td>
+    </tr>`).join("");
+
   return c.html(`<!DOCTYPE html>
-<html><head><title>Error Reports</title>
+<html><head><title>Admin Dashboard</title>
 <style>
 body{font-family:system-ui;background:#faf8f3;padding:2rem;max-width:1100px;margin:0 auto}
-h1{color:#2c2416;margin-bottom:1rem;font-size:1.4rem}
+h1,h2{color:#2c2416;margin-bottom:1rem}
+h1{font-size:1.4rem}
+h2{font-size:1.2rem;margin-top:2.5rem}
 .count{color:#8a7e6b;font-size:0.9rem;margin-bottom:1.5rem}
-table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 6px rgba(0,0,0,0.06)}
+table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 6px rgba(0,0,0,0.06);margin-bottom:2rem}
 th{background:#f5f0e8;color:#2c2416;padding:0.75rem;text-align:left;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.04em}
 td{padding:0.75rem;border-top:1px solid #f0ebe3;font-size:0.9rem;color:#2c2416;vertical-align:middle}
 audio{height:32px;width:200px}
 tr:hover td{background:#faf8f3}
 .empty{text-align:center;padding:3rem;color:#8a7e6b}
+.trigger-badge{display:inline-block;padding:0.2rem 0.6rem;border-radius:4px;font-size:0.8rem;font-weight:500}
+.trigger-surah_jump{background:#fde8e8;color:#9b2c2c}
+.trigger-rapid_switching{background:#fef3cd;color:#856404}
 </style></head><body>
 <h1>Error Reports</h1>
 <p class="count">${reports.length} report${reports.length !== 1 ? "s" : ""}</p>
@@ -84,5 +115,12 @@ ${reports.length ? `<table>
 <thead><tr><th>Time</th><th>Expected Verse</th><th>Model Predicted</th><th>Notes</th><th>Audio</th></tr></thead>
 <tbody>${rows}</tbody>
 </table>` : "<p class='empty'>No reports yet.</p>"}
+
+<h2>Auto-Diagnostics</h2>
+<p class="count">${diagnostics.length} diagnostic${diagnostics.length !== 1 ? "s" : ""}</p>
+${diagnostics.length ? `<table>
+<thead><tr><th>Time</th><th>Trigger</th><th>Events</th><th>Audio</th></tr></thead>
+<tbody>${diagRows}</tbody>
+</table>` : "<p class='empty'>No diagnostics captured yet.</p>"}
 </body></html>`);
 });

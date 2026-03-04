@@ -198,8 +198,8 @@ export class RecitationTracker {
         this._exitTracking(
           `stale (${this.staleCycles} cycles, no progress)`,
         );
-        // Force immediate re-discovery on next feed() instead of waiting 2s
-        this.newAudioCount = TRIGGER_SAMPLES;
+        // Let audio buffer accumulate naturally before re-attempting discovery
+        this.newAudioCount = 0;
         return messages;
       }
     } else {

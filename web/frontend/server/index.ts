@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { adminApp } from "./admin.js";
+import { diagnosticsApp } from "./diagnostics.js";
 import { reportsApp } from "./reports.js";
 
 const app = new Hono();
@@ -31,6 +32,7 @@ app.get("/api/clear-cache", (c) => {
 
 // Mount reports API
 app.route("/api/reports", reportsApp);
+app.route("/api/diagnostics", diagnosticsApp);
 
 // Mount admin dashboard
 app.route("/admin", adminApp);
