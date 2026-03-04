@@ -364,6 +364,8 @@ async def websocket_endpoint(ws: WebSocket):
     new_audio_count = 0
     last_emitted_ref: tuple[int, int] | None = None
     last_emitted_text: str = ""
+    prev_emitted_ref: tuple[int, int] | None = None
+    prev_emitted_text: str = ""
 
     # Tracking mode state
     tracking_verse: dict | None = None  # the verse we're tracking within
@@ -388,16 +390,30 @@ async def websocket_endpoint(ws: WebSocket):
 
     def _exit_tracking(reason: str) -> None:
         nonlocal tracking_verse, tracking_verse_words, tracking_last_word_idx
-        nonlocal silence_samples, stale_cycles, last_emitted_text
+        nonlocal silence_samples, stale_cycles
+        nonlocal last_emitted_ref, last_emitted_text
+        nonlocal prev_emitted_ref, prev_emitted_text
         log.info("TRACKING exit: %s", reason)
-        # When exiting due to stale tracking (not verse completion),
-        # update last_emitted_text to only the tracked portion so that
-        # discovery mode can detect the continuation of the same verse
-        # without being blocked by residual overlap.
-        if reason.startswith("stale") and tracking_verse_words and tracking_last_word_idx >= 0:
+
+        verse_len = len(tracking_verse_words)
+        progress = (tracking_last_word_idx + 1) / verse_len if verse_len > 0 else 0
+
+        if reason == "verse complete":
+            pass  # caller already updated last_emitted_ref/text
+        elif reason.startswith("stale") and progress < 0.5:
+            # Low progress + stale = likely misidentification (e.g. two
+            # verses share a prefix but diverge). Revert to pre-tracking
+            # state so discovery isn't blocked by the residual overlap check.
+            log.info("  (misidentification detected, progress=%.0f%%, reverting state)", progress * 100)
+            last_emitted_ref = prev_emitted_ref
+            last_emitted_text = prev_emitted_text
+        elif reason.startswith("stale") and tracking_verse_words and tracking_last_word_idx >= 0:
+            # Good progress + stale = was tracking correctly but user
+            # paused or diverged. Trim residual text to tracked portion.
             tracked_portion = " ".join(tracking_verse_words[:tracking_last_word_idx + 1])
             last_emitted_text = tracked_portion
             log.info("  (updated residual text to tracked portion: %d words)", tracking_last_word_idx + 1)
+
         tracking_verse = None
         tracking_verse_words = []
         tracking_last_word_idx = -1
@@ -542,6 +558,9 @@ async def websocket_endpoint(ws: WebSocket):
                                     "surrounding_verses": surrounding,
                                 }
                             )
+                            # Save completed verse state for recovery if next-verse tracking fails
+                            prev_emitted_ref = last_emitted_ref
+                            prev_emitted_text = last_emitted_text
                             last_emitted_ref = next_ref
                             last_emitted_text = normalize_arabic(
                                 next_v["text_clean"]
@@ -676,6 +695,9 @@ async def websocket_endpoint(ws: WebSocket):
                     f"-{ayah_end}" if ayah_end else "",
                     hint_str,
                 )
+                # Save pre-match state for recovery if tracking determines misidentification
+                prev_emitted_ref = last_emitted_ref
+                prev_emitted_text = last_emitted_text
                 last_emitted_ref = effective_ref
                 last_emitted_text = normalize_arabic(
                     match.get("text_clean", "")

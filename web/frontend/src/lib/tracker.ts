@@ -100,6 +100,8 @@ export class RecitationTracker {
   private newAudioCount = 0;
   private lastEmittedRef: [number, number] | null = null;
   private lastEmittedText = "";
+  private prevEmittedRef: [number, number] | null = null;
+  private prevEmittedText = "";
 
   // Tracking mode state
   private trackingVerse: QuranVerse | null = null;
@@ -255,6 +257,9 @@ export class RecitationTracker {
             confidence: 0.99,
             surrounding_verses: surrounding,
           });
+          // Save completed verse state for recovery if next-verse tracking fails
+          this.prevEmittedRef = this.lastEmittedRef;
+          this.prevEmittedText = this.lastEmittedText;
           this.lastEmittedRef = nextRef;
           this.lastEmittedText = normalizeArabic(nextV.text_clean);
           this._enterTracking(nextV, nextRef);
@@ -340,6 +345,9 @@ export class RecitationTracker {
       const effectiveRef: [number, number] = ayahEnd
         ? [match.surah, ayahEnd]
         : ref;
+      // Save pre-match state for recovery if tracking determines misidentification
+      this.prevEmittedRef = this.lastEmittedRef;
+      this.prevEmittedText = this.lastEmittedText;
       this.lastEmittedRef = effectiveRef;
       this.lastEmittedText = normalizeArabic(
         match.text_clean ?? verse?.text_clean ?? "",
@@ -374,17 +382,30 @@ export class RecitationTracker {
   }
 
   private _exitTracking(reason: string): void {
-    // When exiting due to stale tracking, update last_emitted_text
-    // to only the tracked portion
-    if (
+    const verseLen = this.trackingVerseWords.length;
+    const progress =
+      verseLen > 0 ? (this.trackingLastWordIdx + 1) / verseLen : 0;
+
+    if (reason === "verse complete") {
+      // Caller already updated lastEmittedRef/Text
+    } else if (reason.startsWith("stale") && progress < 0.5) {
+      // Low progress + stale = likely misidentification (e.g. two verses
+      // share a prefix but diverge). Revert to pre-tracking state so
+      // discovery isn't blocked by the residual overlap check.
+      this.lastEmittedRef = this.prevEmittedRef;
+      this.lastEmittedText = this.prevEmittedText;
+    } else if (
       reason.startsWith("stale") &&
       this.trackingVerseWords.length > 0 &&
       this.trackingLastWordIdx >= 0
     ) {
+      // Good progress + stale = was tracking correctly but user
+      // paused or diverged. Trim residual text to tracked portion.
       this.lastEmittedText = this.trackingVerseWords
         .slice(0, this.trackingLastWordIdx + 1)
         .join(" ");
     }
+
     this.trackingVerse = null;
     this.trackingVerseWords = [];
     this.trackingLastWordIdx = -1;
