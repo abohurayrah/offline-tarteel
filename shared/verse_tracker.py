@@ -78,12 +78,19 @@ class VerseTracker:
 
         for v in self.db.verses:
             score = self._score_verse(text, v["text_clean"], v["surah"], v["ayah"])
+            matched_text = v["text_clean"]
+            # Also try matching without bismillah prefix (same as match_verse)
+            if v.get("text_clean_no_bsm"):
+                alt = self._score_verse(text, v["text_clean_no_bsm"], v["surah"], v["ayah"])
+                if alt > score:
+                    score = alt
+                    matched_text = v["text_clean_no_bsm"]
             if score > best_score:
                 best_score = score
                 best = {
                     "surah": v["surah"],
                     "ayah": v["ayah"],
-                    "text_clean": v["text_clean"],
+                    "text_clean": matched_text,
                     "score": best_score,
                 }
 
@@ -92,18 +99,11 @@ class VerseTracker:
         return None
 
     def _emit(self, match: dict) -> dict | None:
-        """Emit a verse detection and reset state. Returns None if duplicate."""
-        ref = (match["surah"], match["ayah"])
-        if ref == self._last_emitted:
-            # Same verse as last emission — skip duplicate, just reset tracking
-            self._current_match = None
-            self._peak_score = 0.0
-            return None
+        """Emit a verse detection and reset state. Returns None if duplicate.
 
-        emission = {"surah": match["surah"], "ayah": match["ayah"], "score": match["score"]}
-        self._emissions.append(emission)
-        self._last_emitted = ref
-
+        Always trims accumulated text by the matched verse length, even for
+        duplicates, to prevent infinite recursion in _try_split_and_emit().
+        """
         # Trim accumulated text: remove the portion that matched
         matched_words = match["text_clean"].split()
         acc_words = self._accumulated.split()
@@ -114,6 +114,13 @@ class VerseTracker:
         self._current_match = None
         self._peak_score = 0.0
 
+        ref = (match["surah"], match["ayah"])
+        if ref == self._last_emitted:
+            return None
+
+        emission = {"surah": match["surah"], "ayah": match["ayah"], "score": match["score"]}
+        self._emissions.append(emission)
+        self._last_emitted = ref
         return emission
 
     def _try_split_and_emit(self, match: dict) -> list[dict]:
