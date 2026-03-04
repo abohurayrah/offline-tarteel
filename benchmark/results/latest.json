@@ -112,6 +112,34 @@
     "source_file": "2026-02-27_072850.json"
   },
   {
+    "name": "fastconformer-phoneme",
+    "recall": 0.9320754716981133,
+    "precision": 0.9339622641509434,
+    "sequence_accuracy": 0.9056603773584906,
+    "total": 53,
+    "avg_latency": 0.7333479009520368,
+    "model_size": 457268504,
+    "timestamp": "2026-03-04_090905",
+    "mode": "full",
+    "category": null,
+    "chunk_seconds": null,
+    "source_file": "2026-03-04_090905.json"
+  },
+  {
+    "name": "fastconformer-phoneme",
+    "recall": 0.9111111111111112,
+    "precision": 0.9259259259259259,
+    "sequence_accuracy": 0.9074074074074074,
+    "total": 54,
+    "avg_latency": 1.1911671689433407,
+    "model_size": 457268504,
+    "timestamp": "2026-03-02_143855",
+    "mode": "full",
+    "category": null,
+    "chunk_seconds": null,
+    "source_file": "2026-03-02_143855.json"
+  },
+  {
     "name": "fastconformer-quran-lm-fusion",
     "recall": 0.9111111111111112,
     "precision": 0.9259259259259259,
@@ -267,6 +295,20 @@
   },
   {
     "name": "nvidia-fastconformer",
+    "recall": 0.9283018867924528,
+    "precision": 0.9433962264150944,
+    "sequence_accuracy": 0.9245283018867925,
+    "total": 53,
+    "avg_latency": 0.6313961242075201,
+    "model_size": 120586240,
+    "timestamp": "2026-03-04_104948",
+    "mode": "full",
+    "category": null,
+    "chunk_seconds": null,
+    "source_file": "2026-03-04_104948.json"
+  },
+  {
+    "name": "nvidia-fastconformer",
     "recall": 0.9111111111111112,
     "precision": 0.9259259259259259,
     "sequence_accuracy": 0.9074074074074074,
@@ -309,17 +351,17 @@
   },
   {
     "name": "nvidia-fastconformer",
-    "recall": 0.5777777777777778,
-    "precision": 0.6666666666666666,
-    "sequence_accuracy": 0.5555555555555556,
+    "recall": 0.911111111111111,
+    "precision": 0.9222222222222223,
+    "sequence_accuracy": 0.7777777777777778,
     "total": 9,
-    "avg_latency": 0.6303357131158313,
+    "avg_latency": 1.3355606757492449,
     "model_size": 120586240,
-    "timestamp": "2026-02-28_091132",
+    "timestamp": "2026-03-04_113805",
     "mode": "full",
     "category": "multi",
     "chunk_seconds": null,
-    "source_file": "2026-02-28_091132.json"
+    "source_file": "2026-03-04_113805.json"
   },
   {
     "name": "nvidia-fastconformer",
@@ -852,6 +894,20 @@
     "category": null,
     "chunk_seconds": 5.0,
     "source_file": "2026-02-25_204636.json"
+  },
+  {
+    "name": "two-stage",
+    "recall": 0.6578616352201258,
+    "precision": 0.660377358490566,
+    "sequence_accuracy": 0.6226415094339622,
+    "total": 53,
+    "avg_latency": 2.571708951235468,
+    "model_size": 485715366,
+    "timestamp": "2026-03-04_090650",
+    "mode": "full",
+    "category": null,
+    "chunk_seconds": null,
+    "source_file": "2026-03-04_090650.json"
   },
   {
     "name": "two-stage",

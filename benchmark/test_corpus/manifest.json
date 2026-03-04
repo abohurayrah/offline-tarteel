@@ -395,21 +395,6 @@
       ]
     },
     {
-      "id": "retasy_019",
-      "file": "retasy_019.wav",
-      "surah": 3,
-      "ayah": 2,
-      "ayah_end": null,
-      "category": "medium",
-      "source": "retasy",
-      "expected_verses": [
-        {
-          "surah": 3,
-          "ayah": 2
-        }
-      ]
-    },
-    {
       "id": "retasy_020",
       "file": "retasy_020.wav",
       "surah": 1,

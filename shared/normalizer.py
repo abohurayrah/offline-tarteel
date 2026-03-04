@@ -18,6 +18,7 @@ _NORM_MAP = str.maketrans({
 
 
 def normalize_arabic(text: str) -> str:
+    text = text.lstrip('\ufeff')  # strip BOM
     text = _DIACRITICS.sub('', text)
     text = text.translate(_NORM_MAP)
     text = ' '.join(text.split())

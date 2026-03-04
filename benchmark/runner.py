@@ -42,6 +42,7 @@ EXPERIMENT_REGISTRY = {
     "fastconformer-ctc-rescore": EXPERIMENTS_DIR / "fastconformer-ctc-rescore" / "run.py",
     "fastconformer-nbest-bruteforce": EXPERIMENTS_DIR / "fastconformer-nbest-bruteforce" / "run.py",
     "contrastive-v2": EXPERIMENTS_DIR / "contrastive-v2" / "run.py",
+    "fastconformer-phoneme": EXPERIMENTS_DIR / "fastconformer-phoneme" / "run.py",
 }
 
 NEW_MODELS_PATH = EXPERIMENTS_DIR / "new-models" / "run.py"
@@ -192,7 +193,10 @@ def run_experiment(
     """
     mod = _load_module(exp["name"].replace("/", "_").replace("-", "_"), exp["run_path"])
 
-    use_predict = hasattr(mod, "predict") and mode == "full"
+    # Prefer transcribe() + streaming pipeline over predict().
+    # predict() does a single match_verse() call which can't handle multi-verse
+    # recordings. Only fall back to predict() for experiments without transcribe().
+    use_predict = hasattr(mod, "predict") and not hasattr(mod, "transcribe") and mode == "full"
 
     if not use_predict and not hasattr(mod, "transcribe"):
         print(f"  Skipping {exp['name']} — no transcribe() or predict() function")

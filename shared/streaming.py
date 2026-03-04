@@ -57,8 +57,10 @@ class StreamingPipeline:
     def run_on_full_transcript(self, audio_path: str, transcribe_fn) -> list[dict]:
         """Run verse detection on a full transcript (non-streaming).
 
-        Transcribes the whole file at once, then feeds to VerseTracker.
-        Useful as a baseline and for backends that don't support chunking.
+        Transcribes the whole file at once, then iteratively calls
+        match_verse to peel off verses from the transcript front-to-back.
+        Works for multi-verse recordings because trigram-indexed match_verse
+        is length-agnostic — trigram overlap doesn't penalize length mismatch.
 
         Args:
             audio_path: Path to audio file
@@ -68,9 +70,32 @@ class StreamingPipeline:
             Ordered list of verse emissions [{"surah", "ayah", "score"}]
         """
         transcript = transcribe_fn(audio_path)
-        tracker = VerseTracker(self.db)
-        emissions = tracker.process_text(transcript)
-        emissions += tracker.finalize()
+
+        from shared.normalizer import normalize_arabic
+        remaining = normalize_arabic(transcript)
+        if not remaining.strip():
+            return []
+
+        emissions = []
+        hint = None
+        min_score = 0.3
+        for _ in range(20):  # safety bound
+            if not remaining.strip():
+                break
+            result = self.db.match_verse(remaining, max_span=8, hint=hint)
+            if not result or result.get("score", 0) < min_score:
+                break
+            min_score = 0.7  # after first match, require higher confidence
+            surah = result["surah"]
+            ayah_start = result["ayah"]
+            ayah_end = result.get("ayah_end") or ayah_start
+            for ayah in range(ayah_start, ayah_end + 1):
+                emissions.append({"surah": surah, "ayah": ayah, "score": result["score"]})
+            matched_words = result["text_clean"].split()
+            rem_words = remaining.split()
+            overlap = min(len(matched_words), len(rem_words))
+            remaining = " ".join(rem_words[overlap:])
+            hint = (surah, ayah_end)
         return emissions
 
     def run_on_audio_chunked(
