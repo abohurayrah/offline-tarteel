@@ -20,6 +20,20 @@ export interface WordProgressMessage {
   matched_indices: number[];
 }
 
+export interface WordCorrection {
+  word_index: number;
+  expected: string;
+  got: string;
+  error_type: "substitution" | "deletion" | "insertion";
+}
+
+export interface WordCorrectionMessage {
+  type: "word_correction";
+  surah: number;
+  ayah: number;
+  corrections: WordCorrection[];
+}
+
 export interface RawTranscriptMessage {
   type: "raw_transcript";
   text: string;
@@ -47,6 +61,7 @@ export type WorkerOutbound =
   | { type: "error"; message: string }
   | VerseMatchMessage
   | WordProgressMessage
+  | WordCorrectionMessage
   | RawTranscriptMessage;
 
 // ---------------------------------------------------------------------------
@@ -56,10 +71,12 @@ export interface QuranVerse {
   surah: number;
   ayah: number;
   text_uthmani: string;
-  text_clean: string;
   surah_name: string;
   surah_name_en: string;
-  text_clean_no_bsm?: string | null;
+  phonemes: string;
+  phonemes_joined: string;
+  phonemes_joined_no_bsm?: string | null;
+  phoneme_words: string[];
 }
 
 export interface SurahData {
