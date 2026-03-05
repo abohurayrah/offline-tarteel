@@ -27,6 +27,20 @@ Key files (all in `web/frontend/`):
 - `test/diagnose-longverse.ts` — diagnostic tool for long-verse failures (ratio vs partialRatio vs bestSpanRatio)
 - `test/diagnose-multiverse.ts` — diagnostic tool for multi-verse cascading
 
+## Phase 2 Results (completed)
+
+**After Phase 1:** 25/53 (47.2%) streaming
+**After Phase 2:** 31-32/53 (58-60%) streaming, 37/53 non-streaming (no regression)
+**Net gain:** +6-7 samples over Phase 1, zero non-streaming regressions
+
+### Phase 2 changes made
+
+1. **`fastPartialRatio` for long-verse discovery** (quran-db.ts) — Sliding window partial matching with coarse-then-refine for performance. Re-scores 30+ word verses when continuation hint exists, using spaceless text comparison (model outputs have no word boundaries). Discount factor 0.85 prevents false positives.
+
+2. **Character-level tracking progress** (tracker.ts) — `_charLevelProgress()` method slides the transcript across the verse's joined phonemes to estimate word position. Only enabled for verses with 10+ words (short verses use word-level alignment). Threshold 0.55 prevents spurious progress in wrong verses. This fixed tracking for multi-verse cascading (67:1→67:2→...→67:13).
+
+3. **Tuned interactions** — The partial scoring discount (0.85), char-level threshold (0.55), and 10+ word gate work together: partial scoring discovers correct long verses without boosting wrong short ones, and char-level tracking enables proper verse-by-verse progression.
+
 ## Phase 1 Results (completed)
 
 **Baseline:** 21/53 (39.6%) streaming, 37/53 non-streaming
