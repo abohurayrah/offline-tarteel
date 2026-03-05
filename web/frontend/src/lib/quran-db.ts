@@ -3,6 +3,32 @@ import type { QuranVerse } from "./types";
 
 const _BSM_PHONEMES_JOINED = "bismi allahi arraHmaani arraHiimi";
 
+function fastPartialRatio(short: string, long: string): number {
+  if (!short || !long) return 0.0;
+  if (short.length > long.length) [short, long] = [long, short];
+  const window = short.length;
+  const maxI = Math.max(0, long.length - window);
+  if (maxI === 0) return ratio(short, long);
+
+  // Coarse pass: step by ~10% of window size
+  const step = Math.max(3, Math.floor(window / 10));
+  let best = 0.0;
+  let bestI = 0;
+  for (let i = 0; i <= maxI; i += step) {
+    const r = ratio(short, long.slice(i, i + window));
+    if (r > best) { best = r; bestI = i; }
+    if (best >= 0.92) return best;
+  }
+  // Refine: search around best position at single-char resolution
+  const refStart = Math.max(0, bestI - step);
+  const refEnd = Math.min(maxI, bestI + step);
+  for (let i = refStart; i <= refEnd; i++) {
+    const r = ratio(short, long.slice(i, i + window));
+    if (r > best) best = r;
+  }
+  return best;
+}
+
 export function partialRatio(short: string, long: string): number {
   if (!short || !long) return 0.0;
   if (short.length > long.length) [short, long] = [long, short];
@@ -157,6 +183,33 @@ export class QuranDB {
       scored.push([v, raw, bonus, Math.min(raw + bonus, 1.0)]);
     }
     scored.sort((a, b) => b[3] - a[3]);
+
+    // Pass 1.5: re-score long verses with partial matching (character-level)
+    // ratio() penalizes length mismatches; partial scoring fixes this for long verses.
+    // - 40+ word verses: always re-score (ratio() is catastrophically wrong for these)
+    // - 30-39 word verses: only re-score when hint is set (rediscovery after stale)
+    const noSpaceText = text.replace(/ /g, "");
+    if (noSpaceText.length >= 10) {
+      let resorted = false;
+      for (let i = 0; i < scored.length; i++) {
+        const [v, raw, bonus] = scored[i];
+        const wc = v.phoneme_words.length;
+        if (wc < 30 || (!hint && wc < 40)) continue;
+        const nsVerse = v.phonemes_joined.replace(/ /g, "");
+        if (noSpaceText.length >= nsVerse.length * 0.8) continue;
+        let spanRaw = fastPartialRatio(noSpaceText, nsVerse);
+        if (v.phonemes_joined_no_bsm) {
+          const nsNoBsm = v.phonemes_joined_no_bsm.replace(/ /g, "");
+          spanRaw = Math.max(spanRaw, fastPartialRatio(noSpaceText, nsNoBsm));
+        }
+        const effectiveRaw = Math.max(raw, spanRaw * 0.85);
+        if (effectiveRaw > raw) {
+          scored[i] = [v, effectiveRaw, bonus, Math.min(effectiveRaw + bonus, 1.0)];
+          resorted = true;
+        }
+      }
+      if (resorted) scored.sort((a, b) => b[3] - a[3]);
+    }
 
     const [bestV, bestRaw, bestBonus, bestScoreInit] = scored[0];
     let bestScore = bestScoreInit;

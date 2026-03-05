@@ -23,32 +23,126 @@ Key files (all in `web/frontend/`):
 - `src/worker/mel.ts` — mel spectrogram (don't modify)
 - `src/worker/ctc-decode.ts` — CTC decoder (don't modify)
 - `test/validate-streaming.ts` — test harness
+- `test/diagnose-sample.ts` — diagnostic tool for empty-result failures
+- `test/diagnose-longverse.ts` — diagnostic tool for long-verse failures (ratio vs partialRatio vs bestSpanRatio)
+- `test/diagnose-multiverse.ts` — diagnostic tool for multi-verse cascading
 
-## Root Causes (ranked by impact)
+## Phase 1 Results (completed)
 
-### 1. FIRST_MATCH_THRESHOLD = 0.75 is too high for partial audio (15 empty-result failures)
+**Baseline:** 21/53 (39.6%) streaming, 37/53 non-streaming
+**After Phase 1:** 25/53 (47.2%) streaming, 37/53 non-streaming (no regression)
+**Net gain:** +4 samples, zero regressions
 
-The first-ever verse match requires 0.75 confidence. But in streaming, the first discovery fires after only 2s of audio. A 2s window of a 6-second verse produces a partial transcript that scores ~0.4-0.6 against the full verse text via Levenshtein ratio. The non-streaming baseline uses the effective threshold of 0.45 on the complete audio.
+### Changes made (tracker.ts only)
 
-**Affected samples:** all 15 "empty result" failures — the tracker fires discovery 2-5 times but never hits 0.75.
+1. **Cumulative completion fix** — tracking used per-cycle `matchedIndices.length / totalWords` which underreported coverage from rolling 5s windows. Changed to cumulative `(trackingLastWordIdx + 1) / totalWords`. Unlocked multi-verse tracking completion.
 
-### 2. MAX_WINDOW_SAMPLES = 10s caps destroy long-verse matching (10+ failures)
+2. **`hasEverMatched` flag** — decoupled cold-start threshold from `lastEmittedRef` nullity. Prevents `FIRST_MATCH_THRESHOLD` (0.75) from re-applying after stale rollback resets `lastEmittedRef` to null. Set eagerly on first discovery match and reinforced in `_exitTracking` on successful tracking.
 
-Any verse longer than ~15s can never be matched from a 10s rolling window. Levenshtein ratio for a 10s excerpt vs a 60s verse: `2*partial / (partial + full) ≈ 0.29`. This is below even the 0.45 subsequent-match threshold.
+### What was tried and reverted
 
-**Affected samples:** ref_002255 (52s), ref_024035 (80s), ref_002285 (33s), ref_002286 (53s), ref_003191 (35s), ref_048029 (77s), ref_074031 (65s), ref_033056 (18s), ref_059023 (23s), ref_059024 (23s)
+| Approach | Result | Why it failed |
+|---|---|---|
+| Lower FIRST_MATCH_THRESHOLD (0.55-0.65) | Net zero: +6 gains, -6 regressions | Wrong verses also score 0.55-0.65; false positives cascade |
+| Prefix scoring in matchVerse | Wrong direction | Rolling window keeps LAST N seconds, not first N; transcript is from verse middle/end |
+| Progressive window growth (10s→30s) | More cascading wrong matches | Longer window ≠ better transcript; just more time to match wrong verses |
+| First-match confirmation (2 cycles) | No effect on empty results | Noisy transcripts produce different top matches each cycle |
+| Score margin check (top1 - top2 ≥ 0.05) | No effect | Margins too small in 2s partial audio |
+| Residual TTL (2 cycles) | -2 regression | Removing the check allows MORE wrong cascading |
+| Fast rediscovery (0.5s trigger after stale) | -2 regression | Less audio = noisier transcripts = worse matches |
 
-### 3. Post-verse window reset drops audio for multi-verse transitions (7 failures)
+## Diagnostic Findings (critical — read before implementing)
 
-When a verse completes, the tracker trims audio to last 2s (`TRIGGER_SAMPLES`) and resets `newAudioCount = 0`. It then needs to accumulate 2s of NEW audio before discovery fires again. During that ~2s dead zone, the next verse is already being recited but not evaluated. Short verses (2-4 words) can pass entirely within this gap.
+### Finding 1: `ratio()` fundamentally cannot rank correct verses for partial audio
 
-**Affected samples:** multi_036_001_005, multi_113_001_005, multi_114_001_006, multi_067_001_004, user_ikhlas_2_3, multi_059_022_024, multi_002_285_286
+The Levenshtein `ratio()` formula `2 * matches / (len1 + len2)` inherently penalizes length mismatches. A 20-character streaming transcript compared against a 34-character verse (correct) scores ~0.60, while a wrong 22-character verse scores ~0.71 simply because it's closer in length.
 
-### 4. Residual check blocks re-discovery after wrong-verse emit (contributes to 9 wrong-verse failures)
+| Sample | Correct verse ratio (streaming) | Best wrong verse ratio | Correct verse ratio (full-file) |
+|---|---|---|---|
+| retasy_003 (1:2) | 0.600 | 0.705 (26:101) | 0.852 |
+| retasy_017 (1:7) | 0.588 | 0.710 | 0.788 |
+| ref_003191 (3:191) | 0.548 | 0.685 | 0.829 |
 
-After emitting a wrong verse, `partialRatio(newText, lastEmittedText) > 0.7` blocks subsequent discovery of the correct verse — because similar Quranic verses share phoneme subsequences. The wrong initial emit cascades into a permanent block.
+**The correct verse never appears in the top 3 candidates during any streaming cycle.** The problem is NOT the threshold — it's that `ratio()` ranks wrong verses higher than the correct one for partial transcripts.
 
-**Affected samples:** ref_002255 (got 3 wrong verses), ref_059023, ref_059024, ref_048029, ref_033056, ref_074031
+### Finding 2: `partialRatio` and `bestSpanRatio` fix long-verse scoring completely
+
+For long verses (20+ seconds), `ratio()` is catastrophically bad because the 10s rolling window produces a transcript covering ~15% of the verse text. But partial/span scoring works:
+
+| Sample | Best `ratio()` | Best `partialRatio()` | Best `bestSpanRatio()` |
+|---|---|---|---|
+| ref_002255 (52s, Ayat al-Kursi) | 0.328 | 0.889 | 0.920 |
+| ref_048029 (77s) | 0.254 | 0.863 | 0.914 |
+
+Both `partialRatio` and `bestSpanRatio` score the correct verse at 0.86-0.92 — well above any threshold. The fix is clear: use span-based scoring in `matchVerse()`.
+
+`bestSpanRatio` implementation (slide a window of ~transcript length across the verse):
+```ts
+function bestSpanRatio(text: string, verseText: string): number {
+  const textWords = text.split(" ");
+  const verseWords = verseText.split(" ");
+  if (textWords.length < 2) return 0;
+  let best = 0;
+  const spanLen = Math.min(textWords.length + 3, verseWords.length);
+  for (let i = 0; i <= verseWords.length - spanLen; i++) {
+    const span = verseWords.slice(i, i + spanLen).join(" ");
+    best = Math.max(best, ratio(text, span));
+  }
+  return best;
+}
+```
+
+### Finding 3: Tracking mode is broken — model outputs phonemes without word boundaries
+
+**This is the biggest discovery.** The ONNX phoneme model outputs continuous phoneme strings like `"tabyadhilmulkuwahwaEalaakulli$ay<"` without spaces between words. The tracker's `alignPosition()` does `text.split(" ")` to get recognized words, producing 1-2 giant strings. These never match individual entries in `phoneme_words` like `["bismi", "allahi", ...]`.
+
+Evidence from multi_067_001_004:
+- Tracker correctly discovers 67:1 via discovery mode (full-text Levenshtein works)
+- Enters tracking mode for 67:1
+- `alignPosition` always returns `matchedIndices = []` because the spaceless transcript can't match individual words
+- After 4 stale cycles (0% progress), tracking exits
+- Stale rollback (progress < 0.5) resets `lastEmittedRef`, losing the continuation hint
+- Discovery cascades into wrong verses without the continuation bonus
+
+**Tracking mode never actually tracks word progress for most verses.** The cumulative completion fix helped only because some transcripts coincidentally had partial space separation.
+
+## Root Causes (revised, ranked by impact)
+
+### 1. CRITICAL: `ratio()` cannot match partial transcripts against full verses
+
+`matchVerse()` uses `ratio(text, verse.phonemes_joined)` which penalizes length mismatches. For streaming's short windows, this means:
+- Correct verse scores 0.25-0.60 (transcript much shorter than verse)
+- Wrong shorter verses score 0.65-0.89 (closer in length to transcript)
+- The correct verse is not even in the top 3 candidates
+
+**Fix:** Use `bestSpanRatio()` (or `partialRatio()`) as supplementary scorer: `max(ratio, discounted_span_ratio)`. Apply to top N candidates from initial `ratio()` pass for performance.
+
+**Affects:** ALL failure types — empty results, long verses, and cascading wrong matches all stem from bad ranking.
+
+### 2. CRITICAL: Tracking mode's word alignment is incompatible with model output
+
+The model outputs continuous phoneme strings without word boundaries. `alignPosition()` splits on spaces and tries to match individual words, which always fails. Tracking always stale-exits at 0% progress.
+
+**Fix:** Either:
+- Use character-level alignment instead of word-level in tracking
+- Use `partialRatio()` or sliding-window alignment to measure tracking progress
+- Pre-process the transcript to insert word boundaries by aligning against the verse's known phoneme words
+
+**Affects:** All multi-verse tracking, verse completion detection, word_progress emissions.
+
+### 3. HIGH: Post-verse stale rollback loses continuation context
+
+When tracking stales at 0% (which is ALWAYS due to #2), `lastEmittedRef` is rolled back, losing the continuation bonus for the next verse. This removes the +0.22 bonus that would correctly bias discovery toward the next verse in sequence.
+
+**Fix:** Fixing #2 would fix this automatically. Alternatively, don't roll back `lastEmittedRef` when tracking duration was very short (stale exit within 2-3 cycles suggests the verse identification was wrong, but if tracking lasted longer, the verse was likely correct even if word alignment failed).
+
+### 4. MEDIUM: `FIRST_MATCH_THRESHOLD = 0.75` is too high but can't be lowered safely
+
+The threshold blocks correct matches (which score 0.55-0.70) AND wrong matches (which also score 0.55-0.70). Lowering it alone causes net-zero: equal gains and regressions. Only fixing the RANKING (#1) would make lowering the threshold safe.
+
+### 5. LOW: Residual check is both helpful and harmful
+
+The `partialRatio > 0.7` residual check prevents cascading wrong matches (good) but also blocks correct subsequent verses that share phonemes (bad). With better scoring (#1), this check becomes less necessary because correct verses would rank higher and pass above the wrong ones.
 
 ## Constraints
 
@@ -59,37 +153,51 @@ After emitting a wrong verse, `partialRatio(newText, lastEmittedText) > 0.7` blo
 5. Changes must not break the non-streaming path or the browser-side usage (the tracker is also used in the web worker via `inference.ts`)
 6. The `WorkerOutbound` message types in `types.ts` are the public API — don't remove or rename existing message types
 
-## Suggested Approaches (pick what works, not all)
+## Next Steps: Phase 2 Implementation Plan
 
-### A. Lower/adapt first-match threshold
-The 0.75 threshold was meant to prevent false cold-starts, but it's too strict for streaming. Consider:
-- Lower `FIRST_MATCH_THRESHOLD` to ~0.55-0.60
-- Or use a dynamic threshold that tightens as the audio window grows (e.g., start at 0.5 with 2s, rise to 0.75 with 8s+)
-- Or require 2 consecutive discovery cycles to agree on the same verse before emitting
+### Phase 2A: Replace `ratio()` with span-based scoring in `matchVerse()` (highest impact)
 
-### B. Use partial/prefix matching instead of full-verse Levenshtein
-`matchVerse()` compares the transcript against the full verse text using `ratio()`. For a 10-word transcript vs a 40-word verse, this penalizes heavily. Consider:
-- Compare the transcript against only the first N words of each verse (where N ~ transcript word count)
-- Or use `partialRatio()` (already exists) instead of `ratio()` for discovery
-- Or implement a prefix-matching score: align transcript words against the verse prefix and compute coverage
+In `quran-db.ts`, change the scoring in `matchVerse()`:
 
-### C. Grow the window for long verses instead of hard-capping
-Instead of a fixed 10s cap, allow the window to grow when discovery keeps failing:
-- Start with 10s window
-- If X discovery cycles fire without a match, expand to 15s, then 20s
-- Cap at some reasonable max (30s?) to avoid OOM
+1. First pass: `ratio()` on all 6236 verses (fast, existing)
+2. Second pass: `bestSpanRatio()` on top 50 candidates from first pass
+3. Use `max(ratio, bestSpanRatio * 0.90)` as the effective raw score
+4. The 0.90 discount prevents false positives from coincidental substring matches
 
-### D. Fix multi-verse transitions
-After verse completion, instead of trimming to 2s and waiting for 2s of new audio:
-- Keep the tracking-mode trigger interval (0.5s) for the first discovery attempt after exiting tracking
-- Or don't reset `newAudioCount` on verse completion — let discovery fire immediately with accumulated audio
-- Or after verse complete, pre-seed the next discovery with the retained audio so it fires on the next chunk
+This should fix:
+- Long-verse failures (ratio 0.25 → span 0.92)
+- Some empty-result failures (correct verse moves from outside top 3 into top 1)
+- Cascading wrong matches (correct verse ranks higher, continuation bonus compounds)
 
-### E. Improve residual check
-The current `partialRatio > 0.7` check is too broad — it blocks legitimate new verses that happen to share phonemes with the last emitted verse. Consider:
-- Only apply the residual check for the first 1-2 discovery cycles after a verse emit (not permanently)
-- Or compare against a shorter suffix of `lastEmittedText` (last few words, not the full verse)
-- Or remove the check entirely and rely on the dedup check (`lastEmittedRef` same-verse skip) instead
+**Test first with:** `ref_002255`, `ref_048029`, `ref_003191`, `retasy_003`
+
+### Phase 2B: Fix tracking word alignment (second highest impact)
+
+The model's spaceless phoneme output breaks `alignPosition()`. Options:
+
+**Option 1 (simplest):** Use character-level `partialRatio` for tracking progress instead of word-level alignment. Compare the full transcript against the tracking verse's `phonemes_joined` and measure how far into the verse the best-matching window extends.
+
+**Option 2 (more accurate):** Pre-segment the transcript by aligning it against the verse's known word boundaries. For each phoneme_word in the verse, find the best matching substring in the transcript using dynamic programming.
+
+**Option 3 (Codex suggestion):** Accumulate evidence across cycles — track whether alignment progress is monotonic rather than requiring exact word matches.
+
+Start with Option 1 as it's simplest and directly addresses the diagnostic finding.
+
+### Phase 2C: Anti-cascade hysteresis (after 2A and 2B)
+
+After a verse emit, for 1-2 cycles:
+- Continuation candidates (next verse in sequence): normal threshold (0.45)
+- Jumps to unrelated verses: require higher threshold (0.65+)
+
+This preserves the safety valve while allowing legitimate transitions. Only implement after 2A/2B since better scoring may make this unnecessary.
+
+### Phase 2D: Evidence accumulation for first match (after 2A)
+
+If span scoring alone doesn't fix empty results:
+- Let medium-confidence candidates (0.50-0.75) enter a "pending" state
+- Accumulate evidence across 2-4 discovery cycles
+- Emit when confidence spikes or candidate shows monotonic alignment progress
+- This provides a lower effective first-match threshold without false-positive explosion
 
 ## How to Test
 
@@ -106,28 +214,33 @@ npm run test:streaming -- --no-streaming
 npm run test:streaming -- retasy_017
 npm run test:streaming -- ref_002255
 npm run test:streaming -- multi_036_001_005
+
+# Diagnostic tools (for understanding specific failures)
+npx tsx test/diagnose-sample.ts retasy_003
+npx tsx test/diagnose-longverse.ts ref_002255
+npx tsx test/diagnose-multiverse.ts multi_067_001_004
 ```
 
 The test takes ~15-20 minutes for all 53 samples. For faster iteration, test against specific failure buckets:
 
 ```bash
-# Short verses that return empty (threshold issue)
+# Short verses that return empty (scoring/threshold issue)
 npm run test:streaming -- retasy_003
 npm run test:streaming -- retasy_012
 npm run test:streaming -- ref_036001
 
-# Long verses (window cap issue)
+# Long verses (span scoring target)
 npm run test:streaming -- ref_002255
 npm run test:streaming -- ref_024035
 
-# Multi-verse transitions
+# Multi-verse transitions (tracking alignment target)
 npm run test:streaming -- multi_036_001_005
-npm run test:streaming -- multi_103_001_003
+npm run test:streaming -- multi_067_001_004
 ```
 
 ## Success Criteria
 
-- Streaming accuracy: **35/53 (66%)** or higher (currently 22/53 = 41.5%)
+- Streaming accuracy: **35/53 (66%)** or higher (currently 25/53 = 47.2%)
 - Non-streaming must not regress below 37/53
 - No new message types or breaking changes to `WorkerOutbound`
 - The browser app (`npm run dev`) must still work — tracker is used identically

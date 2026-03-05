@@ -107,6 +107,7 @@ export class RecitationTracker {
   private lastEmittedText = "";
   private prevEmittedRef: [number, number] | null = null;
   private prevEmittedText = "";
+  private hasEverMatched = false;
 
   // Tracking mode state
   private trackingVerse: QuranVerse | null = null;
@@ -186,11 +187,21 @@ export class RecitationTracker {
 
     // Align against known verse (using joined phoneme words)
     const resumeFrom = Math.max(this.trackingLastWordIdx, 0);
-    const { matchedIndices } = alignPosition(
+    let { matchedIndices } = alignPosition(
       recognizedWords,
       this.trackingVerseWords,
       resumeFrom,
     );
+
+    // Fallback: character-level progress when word alignment fails
+    // (model often outputs spaceless phoneme strings)
+    // Only for verses with 10+ words where word-level alignment is unreliable
+    if (matchedIndices.length === 0 && text.length >= 5 && this.trackingVerseWords.length >= 10) {
+      const charWordIdx = this._charLevelProgress(text);
+      if (charWordIdx > this.trackingLastWordIdx) {
+        matchedIndices = [charWordIdx];
+      }
+    }
 
     // Check for stale tracking
     const advanced =
@@ -243,13 +254,13 @@ export class RecitationTracker {
 
     // Check if verse is complete
     if (matchedIndices.length > 0) {
-      const coverage =
-        matchedIndices.length / this.trackingVerseWords.length;
+      const cumulativeCoverage =
+        (this.trackingLastWordIdx + 1) / this.trackingVerseWords.length;
       const nearEnd =
-        matchedIndices[matchedIndices.length - 1] >=
+        this.trackingLastWordIdx >=
         this.trackingVerseWords.length - 2;
 
-      if (coverage >= 0.8 && nearEnd) {
+      if (cumulativeCoverage >= 0.8 && nearEnd) {
         // Advance to next verse
         const curRef: [number, number] = [
           this.trackingVerse!.surah,
@@ -325,10 +336,9 @@ export class RecitationTracker {
       5,
     );
 
-    const effectiveThreshold =
-      this.lastEmittedRef === null
-        ? FIRST_MATCH_THRESHOLD
-        : VERSE_MATCH_THRESHOLD;
+    const effectiveThreshold = this.hasEverMatched
+      ? VERSE_MATCH_THRESHOLD
+      : FIRST_MATCH_THRESHOLD;
 
     if (match && match.score >= effectiveThreshold) {
       const ref: [number, number] = [match.surah, match.ayah];
@@ -403,6 +413,8 @@ export class RecitationTracker {
         surrounding_verses: surrounding,
       });
 
+      this.hasEverMatched = true;
+
       // For multi-verse spans, advance hint to the last verse
       const ayahEnd = match.ayah_end;
       const effectiveRef: [number, number] = ayahEnd
@@ -435,6 +447,54 @@ export class RecitationTracker {
     return messages;
   }
 
+  private _charLevelProgress(text: string): number {
+    if (!this.trackingVerse) return -1;
+    const joined = this.trackingVerse.phonemes_joined;
+    const words = this.trackingVerseWords;
+    if (!joined || words.length === 0) return -1;
+
+    // Slide transcript-sized window across verse, find best match position
+    const tLen = text.length;
+    if (tLen < 3 || tLen >= joined.length) return -1;
+
+    let bestScore = 0;
+    let bestEnd = 0;
+    // Step by ~10 chars for speed, then refine
+    const step = Math.max(1, Math.floor(tLen / 5));
+    for (let i = 0; i <= joined.length - tLen; i += step) {
+      const span = joined.slice(i, i + tLen);
+      const s = levRatio(text, span);
+      if (s > bestScore) {
+        bestScore = s;
+        bestEnd = i + tLen;
+      }
+    }
+    // Refine around best position
+    if (step > 1) {
+      const refStart = Math.max(0, bestEnd - tLen - step);
+      const refEnd = Math.min(joined.length - tLen, bestEnd - tLen + step);
+      for (let i = refStart; i <= refEnd; i++) {
+        const span = joined.slice(i, i + tLen);
+        const s = levRatio(text, span);
+        if (s > bestScore) {
+          bestScore = s;
+          bestEnd = i + tLen;
+        }
+      }
+    }
+
+    if (bestScore < 0.55) return -1;
+
+    // Map bestEnd character position to word index
+    let charCount = 0;
+    for (let w = 0; w < words.length; w++) {
+      charCount += words[w].length;
+      if (w < words.length - 1) charCount += 1; // space
+      if (charCount >= bestEnd) return w;
+    }
+    return words.length - 1;
+  }
+
   private _enterTracking(verse: QuranVerse, _ref: [number, number]): void {
     this.trackingVerse = verse;
     this.trackingVerseWords = verse.phoneme_words;
@@ -450,6 +510,7 @@ export class RecitationTracker {
 
     if (reason === "verse complete") {
       // Caller already updated lastEmittedRef/Text
+      this.hasEverMatched = true;
     } else if (reason.startsWith("stale") && progress < 0.5) {
       // Low progress + stale = likely misidentification
       this.lastEmittedRef = this.prevEmittedRef;
@@ -461,6 +522,7 @@ export class RecitationTracker {
     ) {
       // Good progress + stale = was tracking correctly but user
       // paused or diverged. Trim residual text to tracked portion.
+      this.hasEverMatched = true;
       this.lastEmittedText = this.trackingVerseWords
         .slice(0, this.trackingLastWordIdx + 1)
         .join(" ");
