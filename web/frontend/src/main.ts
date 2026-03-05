@@ -8,6 +8,7 @@ import type {
   VerseMatchMessage,
   RawTranscriptMessage,
   WordProgressMessage,
+  WordCorrectionMessage,
   WorkerOutbound,
   QuranVerse,
 } from "./lib/types";
@@ -101,7 +102,7 @@ function toArabicNum(n: number): string {
 // ---------------------------------------------------------------------------
 async function loadQuranData(): Promise<void> {
   if (state.quranData) return;
-  const res = await fetch("/quran.json");
+  const res = await fetch("/quran_phonemes.json");
   state.quranData = await res.json();
   initSurahDropdown(state.quranData);
 }
@@ -355,6 +356,29 @@ function handleWordProgress(msg: WordProgressMessage): void {
   }
 }
 
+function handleWordCorrection(msg: WordCorrectionMessage): void {
+  const lastGroup = state.groups[state.groups.length - 1];
+  if (!lastGroup || lastGroup.surah !== msg.surah) return;
+
+  const verseEl = lastGroup.element.querySelector<HTMLElement>(
+    `.verse[data-ayah="${msg.ayah}"]`,
+  );
+  if (!verseEl) return;
+
+  // Build set of error word indices
+  const errorIndices = new Set(msg.corrections.map((c) => c.word_index));
+
+  const wordEls = verseEl.querySelectorAll<HTMLElement>(".word");
+  for (const wordEl of wordEls) {
+    const idx = parseInt(wordEl.getAttribute("data-word-idx") || "-1");
+    if (errorIndices.has(idx)) {
+      wordEl.classList.add("word--error");
+    } else {
+      wordEl.classList.remove("word--error");
+    }
+  }
+}
+
 function handleRawTranscript(msg: RawTranscriptMessage): void {
   $rawTranscript.textContent = msg.text;
   $rawTranscript.classList.add("visible");
@@ -499,6 +523,8 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
       word_index: msg.word_index, total_words: msg.total_words,
     });
     handleWordProgress(msg);
+  } else if (msg.type === "word_correction") {
+    handleWordCorrection(msg);
   } else if (msg.type === "raw_transcript") {
     pushDiagnosticEvent("raw_transcript", {
       text: msg.text, confidence: msg.confidence,

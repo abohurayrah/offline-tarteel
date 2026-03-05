@@ -228,6 +228,12 @@ body {
   font-weight: 700;
 }
 
+.verse--active .word--error {
+  color: #c0564b;
+  text-decoration: underline wavy #c0564b;
+  text-underline-offset: 0.3em;
+}
+
 /* Recited and upcoming verses: words inherit parent color */
 .verse--recited .word,
 .verse--upcoming .word {
