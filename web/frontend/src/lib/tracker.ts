@@ -1,6 +1,6 @@
 import { ratio as levRatio } from "./levenshtein";
-import { normalizeArabic } from "./normalizer";
 import { QuranDB, partialRatio } from "./quran-db";
+import { computeCorrection } from "./correction";
 import type { QuranVerse, WorkerOutbound, SurroundingVerse } from "./types";
 import {
   SAMPLE_RATE,
@@ -18,7 +18,12 @@ import {
   LOOKAHEAD,
 } from "./types";
 
-type TranscribeFn = (audio: Float32Array) => Promise<string>;
+export interface TranscribeResult {
+  text: string;
+  rawPhonemes: string;
+}
+
+type TranscribeFn = (audio: Float32Array) => Promise<TranscribeResult>;
 
 function concatFloat32(a: Float32Array, b: Float32Array): Float32Array {
   const result = new Float32Array(a.length + b.length);
@@ -174,12 +179,12 @@ export class RecitationTracker {
     this.newAudioCount = 0;
 
     // Transcribe
-    const text = await this.transcribe(this.fullAudio.slice());
+    const { text, rawPhonemes } = await this.transcribe(this.fullAudio.slice());
     if (!text || text.trim().length < 3) return messages;
 
     const recognizedWords = text.split(" ");
 
-    // Align against known verse
+    // Align against known verse (using joined phoneme words)
     const resumeFrom = Math.max(this.trackingLastWordIdx, 0);
     const { matchedIndices } = alignPosition(
       recognizedWords,
@@ -219,6 +224,21 @@ export class RecitationTracker {
         total_words: this.trackingVerseWords.length,
         matched_indices: matchedIndices,
       });
+
+      // Compute and emit word corrections for the recited portion
+      const corrections = computeCorrection(
+        rawPhonemes,
+        this.trackingVerse!.phonemes,
+        wordPos,
+      );
+      if (corrections.length > 0) {
+        messages.push({
+          type: "word_correction",
+          surah: this.trackingVerse!.surah,
+          ayah: this.trackingVerse!.ayah,
+          corrections,
+        });
+      }
     }
 
     // Check if verse is complete
@@ -236,9 +256,7 @@ export class RecitationTracker {
           this.trackingVerse!.ayah,
         ];
         this.lastEmittedRef = curRef;
-        this.lastEmittedText = normalizeArabic(
-          this.trackingVerse!.text_clean,
-        );
+        this.lastEmittedText = this.trackingVerse!.phonemes_joined;
         const nextV = this.db.getNextVerse(curRef[0], curRef[1]);
         this._exitTracking("verse complete");
 
@@ -262,7 +280,7 @@ export class RecitationTracker {
           this.prevEmittedRef = this.lastEmittedRef;
           this.prevEmittedText = this.lastEmittedText;
           this.lastEmittedRef = nextRef;
-          this.lastEmittedText = normalizeArabic(nextV.text_clean);
+          this.lastEmittedText = nextV.phonemes_joined;
           this._enterTracking(nextV, nextRef);
         }
 
@@ -289,7 +307,7 @@ export class RecitationTracker {
     if (isSilence(tail)) return messages;
 
     // Transcribe
-    const text = await this.transcribe(this.fullAudio.slice());
+    const { text } = await this.transcribe(this.fullAudio.slice());
     if (!text || text.trim().length < 5) return messages;
 
     // Skip if transcription is mostly residual from last emitted verse
@@ -317,8 +335,6 @@ export class RecitationTracker {
 
       // Ambiguity guard: only suppress when scores are nearly identical
       // and the transcript hasn't clearly differentiated the verses.
-      // Tracking mode already recovers from misidentification (stale→revert),
-      // so this guard should be very conservative to avoid blocking detection.
       const runnersUp: Record<string, any>[] = match.runners_up ?? [];
       if (runnersUp.length >= 2) {
         const matchVerse = this.db.getVerse(match.surah, match.ayah);
@@ -329,12 +345,12 @@ export class RecitationTracker {
             break;
           }
         }
-        // Only guard when alt is within 3% of top score (was 15%)
+        // Only guard when alt is within 3% of top score
         if (altRunner && altRunner.score >= runnersUp[0].score * 0.97) {
           const altVerse = this.db.getVerse(altRunner.surah, altRunner.ayah);
           if (matchVerse && altVerse) {
-            const w1 = matchVerse.text_clean.split(" ");
-            const w2 = altVerse.text_clean.split(" ");
+            const w1 = matchVerse.phonemes_joined.split(" ");
+            const w2 = altVerse.phonemes_joined.split(" ");
             let sharedPrefix = 0;
             for (
               let i = 0;
@@ -396,9 +412,8 @@ export class RecitationTracker {
       this.prevEmittedRef = this.lastEmittedRef;
       this.prevEmittedText = this.lastEmittedText;
       this.lastEmittedRef = effectiveRef;
-      this.lastEmittedText = normalizeArabic(
-        match.text_clean ?? verse?.text_clean ?? "",
-      );
+      this.lastEmittedText =
+        match.phonemes_joined ?? verse?.phonemes_joined ?? "";
 
       // Enter tracking mode
       if (verse) {
@@ -422,7 +437,7 @@ export class RecitationTracker {
 
   private _enterTracking(verse: QuranVerse, _ref: [number, number]): void {
     this.trackingVerse = verse;
-    this.trackingVerseWords = verse.text_clean.split(" ");
+    this.trackingVerseWords = verse.phoneme_words;
     this.trackingLastWordIdx = -1;
     this.silenceSamples = 0;
     this.staleCycles = 0;
@@ -436,9 +451,7 @@ export class RecitationTracker {
     if (reason === "verse complete") {
       // Caller already updated lastEmittedRef/Text
     } else if (reason.startsWith("stale") && progress < 0.5) {
-      // Low progress + stale = likely misidentification (e.g. two verses
-      // share a prefix but diverge). Revert to pre-tracking state so
-      // discovery isn't blocked by the residual overlap check.
+      // Low progress + stale = likely misidentification
       this.lastEmittedRef = this.prevEmittedRef;
       this.lastEmittedText = this.prevEmittedText;
     } else if (

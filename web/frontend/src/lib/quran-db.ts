@@ -1,8 +1,7 @@
 import { ratio } from "./levenshtein";
-import { normalizeArabic } from "./normalizer";
 import type { QuranVerse } from "./types";
 
-const _BSM_CLEAN = normalizeArabic("بسم الله الرحمن الرحيم");
+const _BSM_PHONEMES_JOINED = "bismi allahi arraHmaani arraHiimi";
 
 export function partialRatio(short: string, long: string): number {
   if (!short || !long) return 0.0;
@@ -32,18 +31,18 @@ export class QuranDB {
       arr.push(v);
       this._bySurah.set(v.surah, arr);
 
-      // Pre-compute bismillah-stripped text for verse 1 of each surah
+      // Pre-compute bismillah-stripped phonemes for verse 1 of each surah
       // (Al-Fatiha 1:1 IS the bismillah, At-Tawbah 9 has none)
       if (
         v.ayah === 1 &&
         v.surah !== 1 &&
         v.surah !== 9 &&
-        v.text_clean.startsWith(_BSM_CLEAN)
+        v.phonemes_joined.startsWith(_BSM_PHONEMES_JOINED)
       ) {
-        const stripped = v.text_clean.slice(_BSM_CLEAN.length).trim();
-        v.text_clean_no_bsm = stripped || null;
+        const stripped = v.phonemes_joined.slice(_BSM_PHONEMES_JOINED.length).trim();
+        v.phonemes_joined_no_bsm = stripped || null;
       } else {
-        v.text_clean_no_bsm = null;
+        v.phonemes_joined_no_bsm = null;
       }
     }
   }
@@ -77,10 +76,9 @@ export class QuranDB {
   }
 
   search(text: string, topK = 5): (QuranVerse & { score: number })[] {
-    text = normalizeArabic(text);
     const scored: (QuranVerse & { score: number })[] = [];
     for (const v of this.verses) {
-      const score = ratio(text, v.text_clean);
+      const score = ratio(text, v.phonemes_joined);
       scored.push({ ...v, score });
     }
     scored.sort((a, b) => b.score - a.score);
@@ -138,7 +136,6 @@ export class QuranDB {
     hint: [number, number] | null = null,
     returnTopK = 0,
   ): Record<string, any> | null {
-    text = normalizeArabic(text);
     if (!text.trim()) return null;
 
     const bonuses = this._continuationBonuses(hint);
@@ -146,15 +143,15 @@ export class QuranDB {
     // Pass 1: score all single verses (with continuation bonus)
     const scored: [QuranVerse, number, number, number][] = [];
     for (const v of this.verses) {
-      let raw = ratio(text, v.text_clean);
+      let raw = ratio(text, v.phonemes_joined);
       // Also try matching without the bismillah prefix for verse 1s
-      if (v.text_clean_no_bsm) {
-        raw = Math.max(raw, ratio(text, v.text_clean_no_bsm));
+      if (v.phonemes_joined_no_bsm) {
+        raw = Math.max(raw, ratio(text, v.phonemes_joined_no_bsm));
       }
       const bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
       // For continuation candidates, also try suffix-prefix matching
       if (bonus > 0) {
-        const sp = QuranDB._suffixPrefixScore(text, v.text_clean);
+        const sp = QuranDB._suffixPrefixScore(text, v.phonemes_joined);
         raw = Math.max(raw, sp);
       }
       scored.push([v, raw, bonus, Math.min(raw + bonus, 1.0)]);
@@ -179,7 +176,7 @@ export class QuranDB {
         raw_score: Math.round(raw * 1000) / 1000,
         bonus: Math.round(bon * 1000) / 1000,
         score: Math.round(total * 1000) / 1000,
-        text_clean: v.text_clean.slice(0, 60),
+        phonemes_joined: v.phonemes_joined.slice(0, 60),
       }));
 
     // Pass 2: try multi-ayah spans around top 20 candidates
@@ -197,9 +194,9 @@ export class QuranDB {
           const chunk = verses.slice(i, i + span);
           // Use no-bismillah text for the first verse in a span
           const firstText =
-            chunk[0].text_clean_no_bsm ?? chunk[0].text_clean;
+            chunk[0].phonemes_joined_no_bsm ?? chunk[0].phonemes_joined;
           const combined = [firstText]
-            .concat(chunk.slice(1).map((c) => c.text_clean))
+            .concat(chunk.slice(1).map((c) => c.phonemes_joined))
             .join(" ");
           const raw = ratio(text, combined);
           const bonus =
@@ -212,7 +209,7 @@ export class QuranDB {
               ayah: chunk[0].ayah,
               ayah_end: chunk[chunk.length - 1].ayah,
               text: chunk.map((c) => c.text_uthmani).join(" "),
-              text_clean: combined,
+              phonemes_joined: combined,
               score,
               raw_score: raw,
               bonus,

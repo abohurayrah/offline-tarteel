@@ -1,19 +1,35 @@
+export interface CTCResult {
+  /** Phonemes within words concatenated, words space-separated: "bismi allahi" */
+  text: string;
+  /** Raw phoneme tokens space-separated: "b i s m i | a l l a h i" */
+  rawPhonemes: string;
+}
+
 export class CTCDecoder {
   private vocab: Map<number, string>;
   private blankId: number;
 
   constructor(vocabJson: Record<string, string>) {
     this.vocab = new Map();
-    let maxId = 0;
+    this.blankId = -1;
     for (const [id, token] of Object.entries(vocabJson)) {
       const numId = parseInt(id);
       this.vocab.set(numId, token);
-      if (numId > maxId) maxId = numId;
+      if (token === "<blank>") {
+        this.blankId = numId;
+      }
     }
-    this.blankId = maxId; // blank is the last token
+    // Fallback: blank is last token if not found by value
+    if (this.blankId === -1) {
+      let maxId = 0;
+      for (const id of this.vocab.keys()) {
+        if (id > maxId) maxId = id;
+      }
+      this.blankId = maxId;
+    }
   }
 
-  decode(logprobs: Float32Array, timeSteps: number, vocabSize: number): string {
+  decode(logprobs: Float32Array, timeSteps: number, vocabSize: number): CTCResult {
     // argmax per timestep
     const ids: number[] = [];
     for (let t = 0; t < timeSteps; t++) {
@@ -40,7 +56,29 @@ export class CTCDecoder {
       prev = id;
     }
 
-    // BPE detokenize: join tokens, replace ▁ (sentencepiece) with space
-    return tokens.join("").replace(/▁/g, " ").trim();
+    // Raw phonemes: all tokens space-separated
+    const rawPhonemes = tokens.join(" ");
+
+    // Joined text: concatenate within words, split on |
+    const words: string[] = [];
+    let currentWord: string[] = [];
+    for (const tok of tokens) {
+      if (tok === "|") {
+        if (currentWord.length > 0) {
+          words.push(currentWord.join(""));
+        }
+        currentWord = [];
+      } else {
+        currentWord.push(tok);
+      }
+    }
+    if (currentWord.length > 0) {
+      words.push(currentWord.join(""));
+    }
+
+    return {
+      text: words.join(" "),
+      rawPhonemes,
+    };
   }
 }
