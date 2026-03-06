@@ -149,32 +149,38 @@ export class QuranDB {
     return scored.slice(0, topK);
   }
 
-  private _continuationBonuses(
+  /**
+   * Bayesian continuation priors — multiplicative instead of additive.
+   * Returns multipliers: next verse → 1.35, +2 → 1.20, +3 → 1.10.
+   * This makes it much harder for coincidentally similar unrelated verses
+   * to outcompete the actual next verse in a sequence.
+   */
+  private _continuationPriors(
     hint: [number, number] | null,
   ): Map<string, number> {
-    const bonuses = new Map<string, number>();
-    if (!hint) return bonuses;
+    const priors = new Map<string, number>();
+    if (!hint) return priors;
 
     const [hSurah, hAyah] = hint;
     const nv = this._byRef.get(`${hSurah}:${hAyah + 1}`);
     if (nv) {
-      bonuses.set(`${hSurah}:${hAyah + 1}`, 0.22);
+      priors.set(`${hSurah}:${hAyah + 1}`, 1.35);
       if (this._byRef.has(`${hSurah}:${hAyah + 2}`))
-        bonuses.set(`${hSurah}:${hAyah + 2}`, 0.12);
+        priors.set(`${hSurah}:${hAyah + 2}`, 1.20);
       if (this._byRef.has(`${hSurah}:${hAyah + 3}`))
-        bonuses.set(`${hSurah}:${hAyah + 3}`, 0.06);
+        priors.set(`${hSurah}:${hAyah + 3}`, 1.10);
     } else {
-      // Last ayah in surah — bonus carries to first ayah(s) of next surah
+      // Last ayah in surah — priors carry to first ayah(s) of next surah
       const nextVerses = this._bySurah.get(hSurah + 1) ?? [];
-      const bonusValues = [0.22, 0.12, 0.06];
+      const priorValues = [1.35, 1.20, 1.10];
       for (let i = 0; i < Math.min(nextVerses.length, 3); i++) {
-        bonuses.set(
+        priors.set(
           `${nextVerses[i].surah}:${nextVerses[i].ayah}`,
-          bonusValues[i],
+          priorValues[i],
         );
       }
     }
-    return bonuses;
+    return priors;
   }
 
   /**
@@ -226,13 +232,13 @@ export class QuranDB {
   ): Record<string, any> | null {
     if (!text.trim()) return null;
 
-    const bonuses = this._continuationBonuses(hint);
+    const priors = this._continuationPriors(hint);
     const noSpaceText = text.replace(/ /g, "");
 
     // Pass 1: trigram-pruned candidates scored with adaptive _smartScore
     const candidates = this._getCandidates(text, 200);
-    // Always include continuation-bonus verses in candidate set
-    for (const key of bonuses.keys()) {
+    // Always include continuation-prior verses in candidate set
+    for (const key of priors.keys()) {
       const [s, a] = key.split(":").map(Number);
       const idx = this.verses.findIndex(v => v.surah === s && v.ayah === a);
       if (idx >= 0) candidates.add(idx);
@@ -251,12 +257,12 @@ export class QuranDB {
       if (v.phonemes_joined_no_bsm) {
         raw = Math.max(raw, ratio(text, v.phonemes_joined_no_bsm));
       }
-      const bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
-      if (bonus > 0) {
+      const prior = priors.get(`${v.surah}:${v.ayah}`) ?? 1.0;
+      if (prior > 1.0) {
         const sp = QuranDB._suffixPrefixScore(text, v.phonemes_joined);
         raw = Math.max(raw, sp);
       }
-      scored.push([v, raw, bonus, Math.min(raw + bonus, 1.0)]);
+      scored.push([v, raw, prior, Math.min(raw * prior, 1.0)]);
     }
     scored.sort((a, b) => b[3] - a[3]);
 
@@ -302,9 +308,9 @@ export class QuranDB {
             .concat(chunk.slice(1).map((c) => c.phonemes_joined))
             .join(" ");
           const raw = ratio(text, combined);
-          const bonus =
-            bonuses.get(`${chunk[0].surah}:${chunk[0].ayah}`) ?? 0.0;
-          const score = Math.min(raw + bonus, 1.0);
+          const prior =
+            priors.get(`${chunk[0].surah}:${chunk[0].ayah}`) ?? 1.0;
+          const score = Math.min(raw * prior, 1.0);
           if (score > bestScore) {
             bestScore = score;
             best = {
@@ -315,7 +321,7 @@ export class QuranDB {
               phonemes_joined: combined,
               score,
               raw_score: raw,
-              bonus,
+              bonus: prior,
             };
           }
         }
@@ -345,7 +351,7 @@ export class QuranDB {
     if (!text.trim()) return null;
 
     const noSpaceText = text.replace(/ /g, "");
-    const bonuses = this._continuationBonuses(hint);
+    const priors = this._continuationPriors(hint);
 
     // Collect window: current verse + next windowSize + prev 2
     const window: QuranVerse[] = [];
@@ -381,12 +387,12 @@ export class QuranDB {
       if (v.phonemes_joined_no_bsm) {
         raw = Math.max(raw, ratio(text, v.phonemes_joined_no_bsm));
       }
-      const bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
-      if (bonus > 0) {
+      const prior = priors.get(`${v.surah}:${v.ayah}`) ?? 1.0;
+      if (prior > 1.0) {
         const sp = QuranDB._suffixPrefixScore(text, v.phonemes_joined);
         raw = Math.max(raw, sp);
       }
-      scored.push([v, raw, bonus, Math.min(raw + bonus, 1.0)]);
+      scored.push([v, raw, prior, Math.min(raw * prior, 1.0)]);
     }
     scored.sort((a, b) => b[3] - a[3]);
 
