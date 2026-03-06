@@ -178,27 +178,19 @@ export class QuranDB {
   }
 
   /**
-   * Length-aware scoring: selects ratio() or fragmentScore() based on
-   * the length ratio between transcript and verse.
-   *   - Similar lengths (0.7–1.3): ratio() — symmetric is fair
-   *   - Query shorter  (< 0.7):    fragmentScore() blended — asymmetric partial
-   *   - Query longer   (> 1.3):    ratio() — likely multi-verse
+   * Score using fragmentScore (Sellers' semi-global) as primary signal,
+   * with ratio() as a floor. fragmentScore has strictly more alignment
+   * freedom than ratio (free gaps at start/end of reference), so it can't
+   * score the correct verse lower. With trigram pre-filtering already
+   * reducing candidates to ~200, false-positive risk is managed.
    */
   private static _smartScore(
     textNoSpace: string,
     verseNs: string,
   ): number {
-    const lengthRatio = textNoSpace.length / verseNs.length;
-
-    if (lengthRatio >= 0.7 && lengthRatio <= 1.3) {
-      return ratio(textNoSpace, verseNs);
-    } else if (lengthRatio < 0.7) {
-      const frag = fragmentScore(textNoSpace, verseNs);
-      const r = ratio(textNoSpace, verseNs);
-      return Math.max(frag, 0.6 * frag + 0.4 * r);
-    } else {
-      return ratio(textNoSpace, verseNs);
-    }
+    const frag = fragmentScore(textNoSpace, verseNs);
+    const r = ratio(textNoSpace, verseNs);
+    return Math.max(frag, r);
   }
 
   private static _suffixPrefixScore(text: string, verseText: string): number {
