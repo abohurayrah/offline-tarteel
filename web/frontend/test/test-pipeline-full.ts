@@ -11,6 +11,8 @@
  *   npx tsx test/test-pipeline-full.ts
  *   npx tsx test/test-pipeline-full.ts --sample=100
  *   npx tsx test/test-pipeline-full.ts --no-disambiguate   # Skip full-audio fallback
+ *   npx tsx test/test-pipeline-full.ts --beam-search       # Use beam search + multi-hypothesis matching
+ *   npx tsx test/test-pipeline-full.ts --beam-search --beam-width=15 --alpha=0.3
  */
 
 import { execSync } from "node:child_process";
@@ -20,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import * as ort from "onnxruntime-node";
 
 import { computeMelSpectrogram } from "../src/worker/mel.ts";
-import { CTCDecoder } from "../src/worker/ctc-decode.ts";
+import { CTCDecoder, Hypothesis } from "../src/worker/ctc-decode.ts";
 import { ratio, fragmentScore } from "../src/lib/levenshtein.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -29,6 +31,9 @@ const SAMPLE_RATE = 16000;
 
 const SAMPLE_SIZE = parseInt(process.argv.find(a => a.startsWith("--sample="))?.split("=")[1] ?? "150");
 const ENABLE_DISAMBIGUATE = !process.argv.includes("--no-disambiguate");
+const ENABLE_BEAM_SEARCH = process.argv.includes("--beam-search");
+const BEAM_WIDTH = parseInt(process.argv.find(a => a.startsWith("--beam-width="))?.split("=")[1] ?? "10");
+const ALPHA = parseFloat(process.argv.find(a => a.startsWith("--alpha="))?.split("=")[1] ?? "0.3");
 
 // ─── Arabic normalization ────────────────────────────────────────────────────
 
@@ -320,7 +325,13 @@ async function initModel(): Promise<void> {
   decoder = new CTCDecoder(JSON.parse(readFileSync(vocabPath, "utf-8")));
 }
 
-async function transcribe(audio: Float32Array): Promise<string> {
+interface InferenceResult {
+  logprobs: Float32Array;
+  timeSteps: number;
+  vocabSize: number;
+}
+
+async function runInference(audio: Float32Array): Promise<InferenceResult> {
   const { features, timeFrames } = await computeMelSpectrogram(audio);
   const inputTensor = new ort.Tensor("float32", features, [1, 80, timeFrames]);
   const lengthTensor = new ort.Tensor("int64", BigInt64Array.from([BigInt(timeFrames)]), [1]);
@@ -331,13 +342,80 @@ async function transcribe(audio: Float32Array): Promise<string> {
   const results = await session.run(feeds);
   const outputTensor = results[session.outputNames[0]];
   const [, timeSteps, vocabSize] = outputTensor.dims as number[];
-  const { text } = decoder.decode(outputTensor.data as Float32Array, timeSteps, vocabSize);
+  return { logprobs: outputTensor.data as Float32Array, timeSteps, vocabSize };
+}
+
+async function transcribe(audio: Float32Array): Promise<string> {
+  const { logprobs, timeSteps, vocabSize } = await runInference(audio);
+  const { text } = decoder.decode(logprobs, timeSteps, vocabSize);
   return text;
+}
+
+/**
+ * Greedy-first with beam search fallback.
+ *
+ * Strategy:
+ * 1. Always start with greedy decode + verse matching (fast, reliable)
+ * 2. If greedy match score < FALLBACK_THRESHOLD, run beam search
+ * 3. Only replace greedy if a beam hypothesis matches significantly better
+ *
+ * This ensures beam search can only HELP (fix failures), never HURT (break successes).
+ */
+const FALLBACK_THRESHOLD = 0.85;  // Only try beam if greedy match is weak
+const BEAM_MARGIN = 0.05;        // Beam must beat greedy by this much
+
+async function transcribeBeamAndMatch(
+  audio: Float32Array,
+  db: ArabicQuranDB,
+): Promise<{ text: string; match: { surah: number; ayah: number; score: number; ayah_end?: number } | null; usedBeam: boolean }> {
+  const { logprobs, timeSteps, vocabSize } = await runInference(audio);
+
+  // Step 1: Greedy decode (always)
+  const { text: greedyText } = decoder.decode(logprobs, timeSteps, vocabSize);
+  const greedyMatch = db.matchVerse(greedyText);
+  const greedyScore = greedyMatch?.score ?? 0;
+
+  // Step 2: If greedy is confident, use it directly (fast path)
+  if (greedyScore >= FALLBACK_THRESHOLD) {
+    return { text: greedyText, match: greedyMatch, usedBeam: false };
+  }
+
+  // Step 3: Greedy was weak — try beam search alternatives
+  const hypotheses = decoder.beamSearch(logprobs, timeSteps, vocabSize, {
+    beamWidth: BEAM_WIDTH,
+    topK: 20,
+  });
+
+  let bestText = greedyText;
+  let bestMatch = greedyMatch;
+  let bestScore = greedyScore;
+  let usedBeam = false;
+
+  for (const hyp of hypotheses) {
+    // Skip if same text as greedy (already matched)
+    if (hyp.text === greedyText) continue;
+
+    const match = db.matchVerse(hyp.text);
+    const matchScore = match?.score ?? 0;
+
+    // Only replace if significantly better than greedy
+    if (matchScore > bestScore + BEAM_MARGIN) {
+      bestText = hyp.text;
+      bestMatch = match;
+      bestScore = matchScore;
+      usedBeam = true;
+    }
+  }
+
+  return { text: bestText, match: bestMatch, usedBeam };
 }
 
 // ─── Transcript cache (avoid re-transcribing full audio) ─────────────────────
 
 const transcriptCache = new Map<string, string>();
+
+// Cache for beam search results
+const beamCache = new Map<string, { text: string; match: { surah: number; ayah: number; score: number; ayah_end?: number } | null; usedBeam: boolean }>();
 
 async function transcribeFile(filePath: string): Promise<string> {
   if (transcriptCache.has(filePath)) return transcriptCache.get(filePath)!;
@@ -345,6 +423,14 @@ async function transcribeFile(filePath: string): Promise<string> {
   const text = await transcribe(audio);
   transcriptCache.set(filePath, text);
   return text;
+}
+
+async function transcribeFileBeam(filePath: string, db: ArabicQuranDB): Promise<{ text: string; match: { surah: number; ayah: number; score: number; ayah_end?: number } | null; usedBeam: boolean }> {
+  if (beamCache.has(filePath)) return beamCache.get(filePath)!;
+  const audio = loadAudio(filePath);
+  const result = await transcribeBeamAndMatch(audio, db);
+  beamCache.set(filePath, result);
+  return result;
 }
 
 // ─── Sampling ────────────────────────────────────────────────────────────────
@@ -402,7 +488,13 @@ async function main() {
   const equivStats = db.getEquivStats();
   console.log(`Quran DB: ${db.verses.length} verses`);
   console.log(`Equivalence groups: ${equivStats.totalGroups} groups, ${equivStats.duplicateVerses} duplicate verses, largest group: ${equivStats.largestGroup}`);
-  console.log(`Disambiguation: ${ENABLE_DISAMBIGUATE ? "ON" : "OFF"}\n`);
+  console.log(`Disambiguation: ${ENABLE_DISAMBIGUATE ? "ON" : "OFF"}`);
+  if (ENABLE_BEAM_SEARCH) {
+    console.log(`Beam search: ON (width=${BEAM_WIDTH}, alpha=${ALPHA})`);
+  } else {
+    console.log(`Beam search: OFF (greedy decode)`);
+  }
+  console.log();
 
   // Build a lookup for full audio files by surah:ayah
   const fullAudioLookup = new Map<string, string>();
@@ -414,6 +506,7 @@ async function main() {
 
   const categories = ["full", "first60", "mid50", "last50"];
   const allResults: EvalResult[] = [];
+  let beamUpgrades = 0;  // Count how many times beam search improved over greedy
 
   for (const cat of categories) {
     const samples = sampleEntries(manifest, cat, SAMPLE_SIZE);
@@ -427,8 +520,19 @@ async function main() {
       if (!existsSync(audioPath)) continue;
 
       try {
-        const text = await transcribeFile(audioPath);
-        let match = db.matchVerse(text);
+        let text: string;
+        let match: { surah: number; ayah: number; score: number; ayah_end?: number } | null;
+
+        if (ENABLE_BEAM_SEARCH) {
+          const result = await transcribeFileBeam(audioPath, db);
+          text = result.text;
+          match = result.match;
+          if (result.usedBeam) beamUpgrades++;
+        } else {
+          text = await transcribeFile(audioPath);
+          match = db.matchVerse(text);
+        }
+
         let evalType = classify(db, entry, match);
         let wasDisambiguated = false;
 
@@ -439,8 +543,14 @@ async function main() {
           if (fullFile) {
             const fullPath = resolve(ROOT, "test/audio-samples", fullFile);
             if (existsSync(fullPath)) {
-              const fullText = await transcribeFile(fullPath);
-              const fullMatch = db.matchVerse(fullText);
+              let fullMatch: typeof match;
+              if (ENABLE_BEAM_SEARCH) {
+                const result = await transcribeFileBeam(fullPath, db);
+                fullMatch = result.match;
+              } else {
+                const fullText = await transcribeFile(fullPath);
+                fullMatch = db.matchVerse(fullText);
+              }
               const fullEval = classify(db, entry, fullMatch);
               // Use full-audio result if it's better
               if (fullEval === "exact" || fullEval === "equivalence" ||
@@ -565,6 +675,9 @@ async function main() {
   console.log(`    No match:              ${totalNoMatch.toString().padStart(4)} (${((totalNoMatch/totalAll)*100).toFixed(1)}%)`);
   if (totalDisambig > 0) {
     console.log(`    Disambiguated:         ${totalDisambig.toString().padStart(4)} (via full audio fallback)`);
+  }
+  if (ENABLE_BEAM_SEARCH && beamUpgrades > 0) {
+    console.log(`    Beam upgrades:         ${beamUpgrades.toString().padStart(4)} (beam search improved over greedy)`);
   }
 
   console.log(`${"═".repeat(70)}\n`);
