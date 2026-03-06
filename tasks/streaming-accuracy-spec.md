@@ -27,6 +27,33 @@ Key files (all in `web/frontend/`):
 - `test/diagnose-longverse.ts` — diagnostic tool for long-verse failures (ratio vs partialRatio vs bestSpanRatio)
 - `test/diagnose-multiverse.ts` — diagnostic tool for multi-verse cascading
 
+## Phase 3 Results (completed)
+
+**After Phase 2:** 30/53 (56.6%) streaming
+**After Phase 3:** 33/53 (62.3%) streaming, 37/53 non-streaming (no regression)
+**Net gain:** +3 samples over Phase 2, zero non-streaming regressions
+
+### Phase 3 changes made
+
+1. **Extended partial scoring to 15+ word verses** (quran-db.ts) — lowered gate from 30→15 words (40→20 without hint). Fixes medium-length verses where ratio() length-mismatch penalty was blocking correct matches.
+
+2. **Anti-cascade hysteresis** (tracker.ts) — after verse emit, for 2 discovery cycles require higher threshold (0.65) for non-continuation jumps. Reduces false positive cascading into wrong verses.
+
+3. **No-space char-level comparison** (tracker.ts) — `_charLevelProgress` strips spaces before sliding-window comparison, improving match quality for spaceless model output.
+
+### What was tried and reverted
+
+| Approach | Result | Why it failed |
+|---|---|---|
+| Remove 10-word char-level gate (transcript-shape only) | +7 gains, -3 regressions (34/53 but unstable) | Cascading through short wrong verses; char-level completes 3-5 word verses instantly |
+| Lower partial scoring to 8+ words | -7 regressions (26/53) | Wrong short verses get boosted partial scores that beat correct long verses |
+| Top-100 rescoreLimit for partial scoring | Catastrophic (-7 long verse regressions) | Long verses score 0.25-0.33 on ratio(); not in top 100, never get partial scoring |
+| OR logic gate (10+ always OR 6+ when spaceless) | Unstable, ±3 variance | ONNX runtime non-determinism makes measurement unreliable |
+
+### Remaining gap analysis
+
+9 streaming-specific failures remain (pass non-streaming, fail streaming). 7 are fundamentally blocked by `FIRST_MATCH_THRESHOLD=0.75` where the correct verse isn't even top-3 in any streaming cycle. Further progress requires a different approach (model upgrade or non-Levenshtein scoring).
+
 ## Phase 2 Results (completed)
 
 **After Phase 1:** 25/53 (47.2%) streaming
