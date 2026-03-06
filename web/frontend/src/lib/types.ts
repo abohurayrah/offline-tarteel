@@ -71,14 +71,15 @@ export interface QuranVerse {
   surah: number;
   ayah: number;
   text_uthmani: string;
+  text_clean: string;
   surah_name: string;
   surah_name_en: string;
-  phonemes: string;
-  phonemes_joined: string;
-  phonemes_joined_no_bsm?: string | null;
-  phonemes_joined_ns?: string;              // no-space version (pre-computed)
-  phonemes_joined_no_bsm_ns?: string | null; // no-space no-bismillah (pre-computed)
-  phoneme_words: string[];
+  // Normalized Arabic text (computed at load time)
+  text_norm?: string;
+  text_norm_ns?: string;                     // no-space version
+  text_norm_no_bsm?: string | null;          // bismillah stripped
+  text_norm_no_bsm_ns?: string | null;       // no-space no-bismillah
+  text_words?: string[];                     // words of normalized text
 }
 
 export interface SurahData {

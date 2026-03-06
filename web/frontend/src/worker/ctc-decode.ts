@@ -1,8 +1,8 @@
 export interface CTCResult {
-  /** Phonemes within words concatenated, words space-separated: "bismi allahi" */
+  /** Decoded Arabic text with spaces (from BPE ▁ word boundaries) */
   text: string;
-  /** Raw phoneme tokens space-separated: "b i s m i | a l l a h i" */
-  rawPhonemes: string;
+  /** Raw BPE tokens space-separated */
+  rawTokens: string;
 }
 
 export class CTCDecoder {
@@ -56,29 +56,15 @@ export class CTCDecoder {
       prev = id;
     }
 
-    // Raw phonemes: all tokens space-separated
-    const rawPhonemes = tokens.join(" ");
+    // Raw tokens: all tokens space-separated
+    const rawTokens = tokens.join(" ");
 
-    // Joined text: concatenate within words, split on |
-    const words: string[] = [];
-    let currentWord: string[] = [];
-    for (const tok of tokens) {
-      if (tok === "|") {
-        if (currentWord.length > 0) {
-          words.push(currentWord.join(""));
-        }
-        currentWord = [];
-      } else {
-        currentWord.push(tok);
-      }
-    }
-    if (currentWord.length > 0) {
-      words.push(currentWord.join(""));
-    }
+    // BPE tokens use ▁ (U+2581) as word boundary marker.
+    // Concatenate all tokens, then replace ▁ with space.
+    const joined = tokens.join("");
+    // Replace ▁ with space, then trim
+    const text = joined.replace(/▁/g, " ").trim();
 
-    return {
-      text: words.join(" "),
-      rawPhonemes,
-    };
+    return { text, rawTokens };
   }
 }

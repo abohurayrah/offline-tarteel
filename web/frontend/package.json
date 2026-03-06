@@ -9,7 +9,9 @@
     "build:server": "npx esbuild server/index.ts --bundle --platform=node --format=esm --outfile=dist-server/index.mjs --packages=external",
     "start": "node dist-server/index.mjs",
     "preview": "vite preview",
-    "test:streaming": "tsx test/validate-streaming.ts"
+    "test:streaming": "tsx test/validate-streaming.ts",
+    "test:onnx": "tsx test/test-onnx-smoke.ts",
+    "test:onnx:all": "tsx test/test-onnx-smoke.ts --all"
   },
   "dependencies": {
     "@fontsource/amiri": "^5.2.8",
@@ -20,7 +22,7 @@
   },
   "devDependencies": {
     "esbuild": "^0.27.3",
-    "onnxruntime-node": "^1.24.2",
+    "onnxruntime-node": "^1.21.0",
     "tsx": "^4.19.0",
     "typescript": "~5.9.3",
     "vite": "^7.3.1",

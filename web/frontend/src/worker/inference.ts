@@ -7,7 +7,7 @@ import { RecitationTracker } from "../lib/tracker";
 import type { TranscribeResult } from "../lib/tracker";
 import type { WorkerInbound, WorkerOutbound } from "../lib/types";
 
-const MODEL_URL = "/fastconformer_phoneme_q8.onnx";
+const MODEL_URL = "/fastconformer_ar_ctc_q8.onnx";
 
 let tracker: RecitationTracker | null = null;
 let decoder: CTCDecoder | null = null;
@@ -32,8 +32,8 @@ async function init() {
   try {
     // Load vocab
     post({ type: "loading_status", message: "Loading vocabulary..." });
-    const vocabRes = await fetch("/phoneme_vocab.json");
-    if (!vocabRes.ok) throw new Error(`phoneme_vocab.json fetch failed: ${vocabRes.status}`);
+    const vocabRes = await fetch("/vocab.json");
+    if (!vocabRes.ok) throw new Error(`vocab.json fetch failed: ${vocabRes.status}`);
     const vocabJson = await vocabRes.json();
     decoder = new CTCDecoder(vocabJson);
 
@@ -52,10 +52,10 @@ async function init() {
     post({ type: "loading_status", message: "Creating inference session..." });
     await createSession(modelBuffer);
 
-    // Load QuranDB (phoneme data)
+    // Load QuranDB (Arabic text data)
     post({ type: "loading_status", message: "Loading Quran data..." });
-    const quranRes = await fetch("/quran_phonemes.json");
-    if (!quranRes.ok) throw new Error(`quran_phonemes.json fetch failed: ${quranRes.status}`);
+    const quranRes = await fetch("/quran.json");
+    if (!quranRes.ok) throw new Error(`quran.json fetch failed: ${quranRes.status}`);
     const quranData = await quranRes.json();
     db = new QuranDB(quranData);
 

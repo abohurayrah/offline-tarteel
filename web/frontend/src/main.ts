@@ -102,9 +102,9 @@ function toArabicNum(n: number): string {
 // ---------------------------------------------------------------------------
 async function loadQuranData(): Promise<void> {
   if (state.quranData) return;
-  const res = await fetch("/quran_phonemes.json");
+  const res = await fetch("/quran.json");
   state.quranData = await res.json();
-  initSurahDropdown(state.quranData);
+  initSurahDropdown(state.quranData!);
 }
 
 async function fetchSurah(surahNum: number): Promise<SurahData> {
