@@ -22,6 +22,7 @@ export class QuranDB {
   verses: QuranVerse[];
   private _byRef: Map<string, QuranVerse> = new Map();
   private _bySurah: Map<number, QuranVerse[]> = new Map();
+  private _trigramIndex: Map<string, number[]> = new Map();
 
   constructor(data: QuranVerse[]) {
     this.verses = data;
@@ -51,6 +52,9 @@ export class QuranDB {
         ? v.phonemes_joined_no_bsm.replace(/ /g, "")
         : null;
     }
+
+    // Build trigram index for fast candidate retrieval
+    this._buildTrigramIndex();
   }
 
   get totalVerses(): number {
@@ -89,6 +93,67 @@ export class QuranDB {
     }
     scored.sort((a, b) => b.score - a.score);
     return scored.slice(0, topK);
+  }
+
+  private _buildTrigramIndex(): void {
+    for (let idx = 0; idx < this.verses.length; idx++) {
+      const v = this.verses[idx];
+      const text = v.phonemes_joined_ns!; // no-space version
+      const seen = new Set<string>();
+      for (let i = 0; i <= text.length - 3; i++) {
+        const tri = text.slice(i, i + 3);
+        if (seen.has(tri)) continue;
+        seen.add(tri);
+        const arr = this._trigramIndex.get(tri);
+        if (arr) arr.push(idx);
+        else this._trigramIndex.set(tri, [idx]);
+      }
+      // Also index bismillah-stripped version
+      if (v.phonemes_joined_no_bsm_ns) {
+        const textNoBsm = v.phonemes_joined_no_bsm_ns;
+        for (let i = 0; i <= textNoBsm.length - 3; i++) {
+          const tri = textNoBsm.slice(i, i + 3);
+          if (seen.has(tri)) continue;
+          seen.add(tri);
+          const arr = this._trigramIndex.get(tri);
+          if (arr) arr.push(idx);
+          else this._trigramIndex.set(tri, [idx]);
+        }
+      }
+    }
+  }
+
+  private _getCandidates(text: string, maxCandidates = 200): Set<number> {
+    const noSpace = text.replace(/ /g, "");
+    if (noSpace.length < 3) {
+      // Too short for trigrams, return all
+      return new Set(this.verses.map((_, i) => i));
+    }
+
+    // Count trigram hits per verse
+    const hits = new Map<number, number>();
+    const queryTrigrams = new Set<string>();
+    for (let i = 0; i <= noSpace.length - 3; i++) {
+      queryTrigrams.add(noSpace.slice(i, i + 3));
+    }
+
+    for (const tri of queryTrigrams) {
+      const posting = this._trigramIndex.get(tri);
+      if (!posting) continue;
+      for (const idx of posting) {
+        hits.set(idx, (hits.get(idx) ?? 0) + 1);
+      }
+    }
+
+    // Sort by hit count descending, take top maxCandidates
+    const sorted = [...hits.entries()].sort((a, b) => b[1] - a[1]);
+    const candidates = new Set<number>();
+    for (let i = 0; i < Math.min(sorted.length, maxCandidates); i++) {
+      candidates.add(sorted[i][0]);
+    }
+
+    // Always include continuation bonus verses
+    return candidates;
   }
 
   private _continuationBonuses(
@@ -147,13 +212,34 @@ export class QuranDB {
     const bonuses = this._continuationBonuses(hint);
     const noSpaceText = text.replace(/ /g, "");
 
-    // Pass 1: score all single verses with ratio() + continuation bonus
+    // Get candidates via trigram index (fast pre-filter)
+    const candidates = this._getCandidates(text, 200);
+
+    // Also add continuation bonus verses to candidates
+    for (const key of bonuses.keys()) {
+      const [s, a] = key.split(":").map(Number);
+      const idx = this.verses.findIndex(v => v.surah === s && v.ayah === a);
+      if (idx >= 0) candidates.add(idx);
+    }
+
+    // Pass 1: score candidates with fragmentScore as PRIMARY (not ratio)
     const scored: [QuranVerse, number, number, number][] = [];
-    for (const v of this.verses) {
-      let raw = ratio(text, v.phonemes_joined);
-      if (v.phonemes_joined_no_bsm) {
-        raw = Math.max(raw, ratio(text, v.phonemes_joined_no_bsm));
+    for (const idx of candidates) {
+      const v = this.verses[idx];
+      // Use fragmentScore as primary metric (asymmetric, handles length differences)
+      let raw = fragmentScore(noSpaceText, v.phonemes_joined_ns!);
+      if (v.phonemes_joined_no_bsm_ns) {
+        raw = Math.max(raw, fragmentScore(noSpaceText, v.phonemes_joined_no_bsm_ns));
       }
+      // Also check ratio for same-length cases
+      const ratioScore = ratio(text, v.phonemes_joined);
+      if (v.phonemes_joined_no_bsm) {
+        const ratioNoBsm = ratio(text, v.phonemes_joined_no_bsm);
+        raw = Math.max(raw, ratioScore, ratioNoBsm);
+      } else {
+        raw = Math.max(raw, ratioScore);
+      }
+
       const bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
       if (bonus > 0) {
         const sp = QuranDB._suffixPrefixScore(text, v.phonemes_joined);
@@ -163,35 +249,10 @@ export class QuranDB {
     }
     scored.sort((a, b) => b[3] - a[3]);
 
-    // Save top-20 surahs from ratio-only ranking for Pass 2 surah selection.
-    // This prevents fragmentScore from polluting which surahs get span-checked.
+    // Save top-20 surahs from scored results for Pass 2 surah selection
     const pass2Surahs = new Set<number>();
     for (let idx = 0; idx < Math.min(scored.length, 20); idx++) {
       pass2Surahs.add(scored[idx][0].surah);
-    }
-
-    // Pass 1.5: boost scores with fragmentScore (directional matching).
-    // fragmentScore asks "how much of the transcript does this verse explain?"
-    // Used as a BOOST (not replacement) to avoid ranking pollution:
-    //   boosted = ratio + (fragmentScore - ratio) * 0.7
-    // This lifts correct long verses above same-length wrong ones, but can't
-    // let random long verses completely hijack the ranking.
-    if (noSpaceText.length >= 8) {
-      let resorted = false;
-      for (let i = 0; i < scored.length; i++) {
-        const [v, raw, bonus] = scored[i];
-        if (noSpaceText.length >= v.phonemes_joined_ns!.length * 0.8) continue;
-        let frag = fragmentScore(noSpaceText, v.phonemes_joined_ns!);
-        if (v.phonemes_joined_no_bsm_ns) {
-          frag = Math.max(frag, fragmentScore(noSpaceText, v.phonemes_joined_no_bsm_ns));
-        }
-        if (frag > raw) {
-          const boosted = raw + (frag - raw) * 0.7;
-          scored[i] = [v, boosted, bonus, Math.min(boosted + bonus, 1.0)];
-          resorted = true;
-        }
-      }
-      if (resorted) scored.sort((a, b) => b[3] - a[3]);
     }
 
     const [bestV, bestRaw, bestBonus, bestScoreInit] = scored[0];
@@ -215,8 +276,7 @@ export class QuranDB {
         phonemes_joined: v.phonemes_joined.slice(0, 60),
       }));
 
-    // Pass 2: try multi-ayah spans in surahs from ratio-only top-20
-    // (using pass2Surahs to avoid fragmentScore pollution)
+    // Pass 2: try multi-ayah spans in surahs from top-20
     for (const s of pass2Surahs) {
       const verses = this._bySurah.get(s)!;
       for (let i = 0; i < verses.length; i++) {
