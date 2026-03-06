@@ -135,6 +135,40 @@ export class QuranDB {
     return best;
   }
 
+  /**
+   * Length-aware scoring: automatically selects the right metric based on
+   * the length ratio between transcript and verse.
+   *
+   * - When lengths are similar (ratio 0.7-1.3): use ratio() — symmetric is fair
+   * - When transcript is much shorter (ratio < 0.7): use fragmentScore() — asymmetric,
+   *   measures "how much of the transcript does the verse explain?"
+   * - When transcript is longer (ratio > 1.3): use ratio() — likely multi-verse
+   *
+   * Returns the score plus which method was used for debugging.
+   */
+  private static _smartScore(
+    text: string,
+    textNoSpace: string,
+    verseJoined: string,
+    verseNs: string,
+  ): number {
+    const lengthRatio = textNoSpace.length / verseNs.length;
+
+    if (lengthRatio >= 0.7 && lengthRatio <= 1.3) {
+      // Similar lengths: symmetric ratio is fair and accurate
+      return ratio(text, verseJoined);
+    } else if (lengthRatio < 0.7) {
+      // Transcript is shorter: use fragmentScore (directional containment)
+      // Weight: 60% fragmentScore + 40% ratio (ratio still matters for short matches)
+      const frag = fragmentScore(textNoSpace, verseNs);
+      const rat = ratio(text, verseJoined);
+      return Math.max(frag, rat * 0.4 + frag * 0.6);
+    } else {
+      // Transcript is longer: likely multi-verse, ratio handles this
+      return ratio(text, verseJoined);
+    }
+  }
+
   matchVerse(
     text: string,
     threshold = 0.3,
@@ -147,12 +181,12 @@ export class QuranDB {
     const bonuses = this._continuationBonuses(hint);
     const noSpaceText = text.replace(/ /g, "");
 
-    // Pass 1: score all single verses with ratio() + continuation bonus
+    // Pass 1: score all single verses with length-aware smart scoring
     const scored: [QuranVerse, number, number, number][] = [];
     for (const v of this.verses) {
-      let raw = ratio(text, v.phonemes_joined);
-      if (v.phonemes_joined_no_bsm) {
-        raw = Math.max(raw, ratio(text, v.phonemes_joined_no_bsm));
+      let raw = QuranDB._smartScore(text, noSpaceText, v.phonemes_joined, v.phonemes_joined_ns!);
+      if (v.phonemes_joined_no_bsm && v.phonemes_joined_no_bsm_ns) {
+        raw = Math.max(raw, QuranDB._smartScore(text, noSpaceText, v.phonemes_joined_no_bsm, v.phonemes_joined_no_bsm_ns));
       }
       const bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
       if (bonus > 0) {
@@ -163,35 +197,10 @@ export class QuranDB {
     }
     scored.sort((a, b) => b[3] - a[3]);
 
-    // Save top-20 surahs from ratio-only ranking for Pass 2 surah selection.
-    // This prevents fragmentScore from polluting which surahs get span-checked.
+    // Save top-20 surahs from Pass 1 for Pass 2 span checking
     const pass2Surahs = new Set<number>();
     for (let idx = 0; idx < Math.min(scored.length, 20); idx++) {
       pass2Surahs.add(scored[idx][0].surah);
-    }
-
-    // Pass 1.5: boost scores with fragmentScore (directional matching).
-    // fragmentScore asks "how much of the transcript does this verse explain?"
-    // Used as a BOOST (not replacement) to avoid ranking pollution:
-    //   boosted = ratio + (fragmentScore - ratio) * 0.7
-    // This lifts correct long verses above same-length wrong ones, but can't
-    // let random long verses completely hijack the ranking.
-    if (noSpaceText.length >= 8) {
-      let resorted = false;
-      for (let i = 0; i < scored.length; i++) {
-        const [v, raw, bonus] = scored[i];
-        if (noSpaceText.length >= v.phonemes_joined_ns!.length * 0.8) continue;
-        let frag = fragmentScore(noSpaceText, v.phonemes_joined_ns!);
-        if (v.phonemes_joined_no_bsm_ns) {
-          frag = Math.max(frag, fragmentScore(noSpaceText, v.phonemes_joined_no_bsm_ns));
-        }
-        if (frag > raw) {
-          const boosted = raw + (frag - raw) * 0.7;
-          scored[i] = [v, boosted, bonus, Math.min(boosted + bonus, 1.0)];
-          resorted = true;
-        }
-      }
-      if (resorted) scored.sort((a, b) => b[3] - a[3]);
     }
 
     const [bestV, bestRaw, bestBonus, bestScoreInit] = scored[0];
@@ -215,9 +224,8 @@ export class QuranDB {
         phonemes_joined: v.phonemes_joined.slice(0, 60),
       }));
 
-    // Pass 2: try multi-ayah spans in surahs from ratio-only top-20
-    // (using pass2Surahs to avoid fragmentScore pollution)
-    for (const s of pass2Surahs) {
+    // Pass 2: try multi-ayah spans in top-20 surahs from Pass 1
+    for (const s of Array.from(pass2Surahs)) {
       const verses = this._bySurah.get(s)!;
       for (let i = 0; i < verses.length; i++) {
         for (let span = 2; span <= maxSpan; span++) {
