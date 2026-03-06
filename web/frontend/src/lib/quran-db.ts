@@ -184,17 +184,17 @@ export class QuranDB {
     }
     scored.sort((a, b) => b[3] - a[3]);
 
-    // Pass 1.5: re-score long verses with partial matching (character-level)
-    // ratio() penalizes length mismatches; partial scoring fixes this for long verses.
-    // - 40+ word verses: always re-score (ratio() is catastrophically wrong for these)
-    // - 30-39 word verses: only re-score when hint is set (rediscovery after stale)
+    // Pass 1.5: re-score medium/long verses with partial matching (character-level)
+    // ratio() penalizes length mismatches; partial scoring fixes this.
+    // - 20+ word verses: always re-score (ratio() is wrong for partial transcripts)
+    // - 15-19 word verses: only re-score when hint is set (rediscovery after stale)
     const noSpaceText = text.replace(/ /g, "");
     if (noSpaceText.length >= 10) {
       let resorted = false;
       for (let i = 0; i < scored.length; i++) {
         const [v, raw, bonus] = scored[i];
         const wc = v.phoneme_words.length;
-        if (wc < 30 || (!hint && wc < 40)) continue;
+        if (wc < 15 || (!hint && wc < 20)) continue;
         const nsVerse = v.phonemes_joined.replace(/ /g, "");
         if (noSpaceText.length >= nsVerse.length * 0.8) continue;
         let spanRaw = fastPartialRatio(noSpaceText, nsVerse);

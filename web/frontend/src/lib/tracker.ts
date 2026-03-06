@@ -108,6 +108,7 @@ export class RecitationTracker {
   private prevEmittedRef: [number, number] | null = null;
   private prevEmittedText = "";
   private hasEverMatched = false;
+  private cyclesSinceEmit = Infinity; // anti-cascade: counts discovery cycles since last emit
 
   // Tracking mode state
   private trackingVerse: QuranVerse | null = null;
@@ -268,6 +269,7 @@ export class RecitationTracker {
         ];
         this.lastEmittedRef = curRef;
         this.lastEmittedText = this.trackingVerse!.phonemes_joined;
+        this.cyclesSinceEmit = 0;
         const nextV = this.db.getNextVerse(curRef[0], curRef[1]);
         this._exitTracking("verse complete");
 
@@ -312,6 +314,7 @@ export class RecitationTracker {
 
     if (this.newAudioCount < TRIGGER_SAMPLES) return messages;
     this.newAudioCount = 0;
+    this.cyclesSinceEmit++;
 
     // Skip silent chunks
     const tail = this.fullAudio.slice(-TRIGGER_SAMPLES);
@@ -336,9 +339,21 @@ export class RecitationTracker {
       5,
     );
 
-    const effectiveThreshold = this.hasEverMatched
+    // Anti-cascade: shortly after an emit, require higher threshold for
+    // non-continuation jumps to prevent false positives from cascading
+    let effectiveThreshold = this.hasEverMatched
       ? VERSE_MATCH_THRESHOLD
       : FIRST_MATCH_THRESHOLD;
+
+    if (match && this.hasEverMatched && this.cyclesSinceEmit <= 2 && this.lastEmittedRef) {
+      const isContinuation =
+        match.surah === this.lastEmittedRef[0] &&
+        match.ayah >= this.lastEmittedRef[1] + 1 &&
+        match.ayah <= this.lastEmittedRef[1] + 3;
+      if (!isContinuation) {
+        effectiveThreshold = Math.max(effectiveThreshold, 0.65);
+      }
+    }
 
     if (match && match.score >= effectiveThreshold) {
       const ref: [number, number] = [match.surah, match.ayah];
@@ -414,6 +429,7 @@ export class RecitationTracker {
       });
 
       this.hasEverMatched = true;
+      this.cyclesSinceEmit = 0;
 
       // For multi-verse spans, advance hint to the last verse
       const ayahEnd = match.ayah_end;
@@ -453,17 +469,20 @@ export class RecitationTracker {
     const words = this.trackingVerseWords;
     if (!joined || words.length === 0) return -1;
 
-    // Slide transcript-sized window across verse, find best match position
-    const tLen = text.length;
-    if (tLen < 3 || tLen >= joined.length) return -1;
+    // Compare no-space text against no-space verse for spaceless model output
+    const noSpaceText = text.replace(/ /g, "");
+    const noSpaceJoined = joined.replace(/ /g, "");
+    const tLen = noSpaceText.length;
+    if (tLen < 3 || tLen >= noSpaceJoined.length) return -1;
 
+    // Slide transcript-sized window across verse, find best match position
     let bestScore = 0;
     let bestEnd = 0;
     // Step by ~10 chars for speed, then refine
     const step = Math.max(1, Math.floor(tLen / 5));
-    for (let i = 0; i <= joined.length - tLen; i += step) {
-      const span = joined.slice(i, i + tLen);
-      const s = levRatio(text, span);
+    for (let i = 0; i <= noSpaceJoined.length - tLen; i += step) {
+      const span = noSpaceJoined.slice(i, i + tLen);
+      const s = levRatio(noSpaceText, span);
       if (s > bestScore) {
         bestScore = s;
         bestEnd = i + tLen;
@@ -472,10 +491,10 @@ export class RecitationTracker {
     // Refine around best position
     if (step > 1) {
       const refStart = Math.max(0, bestEnd - tLen - step);
-      const refEnd = Math.min(joined.length - tLen, bestEnd - tLen + step);
+      const refEnd = Math.min(noSpaceJoined.length - tLen, bestEnd - tLen + step);
       for (let i = refStart; i <= refEnd; i++) {
-        const span = joined.slice(i, i + tLen);
-        const s = levRatio(text, span);
+        const span = noSpaceJoined.slice(i, i + tLen);
+        const s = levRatio(noSpaceText, span);
         if (s > bestScore) {
           bestScore = s;
           bestEnd = i + tLen;
@@ -485,11 +504,11 @@ export class RecitationTracker {
 
     if (bestScore < 0.55) return -1;
 
-    // Map bestEnd character position to word index
+    // Map bestEnd position in no-space string back to word index
+    // Count chars consumed per word (without spaces) to find which word bestEnd falls in
     let charCount = 0;
     for (let w = 0; w < words.length; w++) {
       charCount += words[w].length;
-      if (w < words.length - 1) charCount += 1; // space
       if (charCount >= bestEnd) return w;
     }
     return words.length - 1;
