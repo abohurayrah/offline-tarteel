@@ -69,7 +69,7 @@ export async function computeMelSpectrogram(
     preemphasis: PREEMPH,
     mel_filters: melFilters,
     mel_floor: 1e-10,
-    log_mel: null, // We'll apply log manually for NeMo compatibility
+    log_mel: undefined, // We'll apply log manually for NeMo compatibility
     transpose: false, // Keep [n_mels, time] layout
   });
 

@@ -1,7 +1,24 @@
 import { ratio, fragmentScore } from "./levenshtein";
 import type { QuranVerse } from "./types";
 
-const _BSM_PHONEMES_JOINED = "bismi allahi arraHmaani arraHiimi";
+/**
+ * Normalize Arabic text for comparison:
+ * - Strip BPE markers, diacritics, normalize hamza/taa/yaa
+ */
+function normalizeArabic(text: string): string {
+  text = text.replace(/\u2581/g, " ");  // BPE marker -> space
+  text = text.replace(/\uFEFF/g, "");
+  text = text.replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "");
+  text = text.replace(/[أإآٱ]/g, "ا");
+  text = text.replace(/ة/g, "ه");
+  text = text.replace(/ى/g, "ي");
+  text = text.replace(/ـ/g, "");
+  text = text.replace(/[،؟.!:]/g, "");
+  text = text.replace(/\s+/g, " ").trim();
+  return text;
+}
+
+export { normalizeArabic };
 
 export function partialRatio(short: string, long: string): number {
   if (!short || !long) return 0.0;
@@ -18,6 +35,8 @@ export function partialRatio(short: string, long: string): number {
   return best;
 }
 
+const BSM_NORM = normalizeArabic("بسم الله الرحمن الرحيم");
+
 export class QuranDB {
   verses: QuranVerse[];
   private _byRef: Map<string, QuranVerse> = new Map();
@@ -27,39 +46,39 @@ export class QuranDB {
   constructor(data: QuranVerse[]) {
     this.verses = data;
     for (const v of data) {
+      // Normalize Arabic text at load time
+      const norm = normalizeArabic(v.text_clean || v.text_uthmani);
+      v.text_norm = norm;
+      v.text_norm_ns = norm.replace(/ /g, "");
+      v.text_words = norm.split(" ");
+
+      // Strip bismillah for ayah 1 (except Al-Fatiha 1:1 and At-Tawbah 9:1)
+      if (v.ayah === 1 && v.surah !== 1 && v.surah !== 9) {
+        const stripped = norm.replace(BSM_NORM, "").trim();
+        if (stripped.length > 0) {
+          v.text_norm_no_bsm = stripped;
+          v.text_norm_no_bsm_ns = stripped.replace(/ /g, "");
+        } else {
+          v.text_norm_no_bsm = null;
+          v.text_norm_no_bsm_ns = null;
+        }
+      } else {
+        v.text_norm_no_bsm = null;
+        v.text_norm_no_bsm_ns = null;
+      }
+
       this._byRef.set(`${v.surah}:${v.ayah}`, v);
       const arr = this._bySurah.get(v.surah) ?? [];
       arr.push(v);
       this._bySurah.set(v.surah, arr);
-
-      // Pre-compute bismillah-stripped phonemes for verse 1 of each surah
-      // (Al-Fatiha 1:1 IS the bismillah, At-Tawbah 9 has none)
-      if (
-        v.ayah === 1 &&
-        v.surah !== 1 &&
-        v.surah !== 9 &&
-        v.phonemes_joined.startsWith(_BSM_PHONEMES_JOINED)
-      ) {
-        const stripped = v.phonemes_joined.slice(_BSM_PHONEMES_JOINED.length).trim();
-        v.phonemes_joined_no_bsm = stripped || null;
-      } else {
-        v.phonemes_joined_no_bsm = null;
-      }
-
-      // Pre-compute no-space versions for fragment scoring
-      v.phonemes_joined_ns = v.phonemes_joined.replace(/ /g, "");
-      v.phonemes_joined_no_bsm_ns = v.phonemes_joined_no_bsm
-        ? v.phonemes_joined_no_bsm.replace(/ /g, "")
-        : null;
     }
     this._buildTrigramIndex();
   }
 
-  /** Build trigram inverted index: trigram → verse indices */
   private _buildTrigramIndex(): void {
     for (let idx = 0; idx < this.verses.length; idx++) {
       const v = this.verses[idx];
-      const text = v.phonemes_joined_ns!;
+      const text = v.text_norm_ns!;
       const seen = new Set<string>();
       for (let i = 0; i <= text.length - 3; i++) {
         const tri = text.slice(i, i + 3);
@@ -69,9 +88,8 @@ export class QuranDB {
         if (arr) arr.push(idx);
         else this._trigramIndex.set(tri, [idx]);
       }
-      // Also index bismillah-stripped version
-      if (v.phonemes_joined_no_bsm_ns) {
-        const noBsm = v.phonemes_joined_no_bsm_ns;
+      if (v.text_norm_no_bsm_ns) {
+        const noBsm = v.text_norm_no_bsm_ns;
         for (let i = 0; i <= noBsm.length - 3; i++) {
           const tri = noBsm.slice(i, i + 3);
           if (seen.has(tri)) continue;
@@ -84,11 +102,9 @@ export class QuranDB {
     }
   }
 
-  /** Get top candidates by trigram overlap with query */
   private _getCandidates(text: string, maxCandidates = 200): Set<number> {
     const noSpace = text.replace(/ /g, "");
     if (noSpace.length < 3) {
-      // Too short for trigrams — return all
       return new Set(this.verses.map((_, i) => i));
     }
     const queryTrigrams = new Set<string>();
@@ -140,9 +156,10 @@ export class QuranDB {
   }
 
   search(text: string, topK = 5): (QuranVerse & { score: number })[] {
+    const normText = normalizeArabic(text);
     const scored: (QuranVerse & { score: number })[] = [];
     for (const v of this.verses) {
-      const score = ratio(text, v.phonemes_joined);
+      const score = ratio(normText, v.text_norm!);
       scored.push({ ...v, score });
     }
     scored.sort((a, b) => b.score - a.score);
@@ -164,7 +181,6 @@ export class QuranDB {
       if (this._byRef.has(`${hSurah}:${hAyah + 3}`))
         bonuses.set(`${hSurah}:${hAyah + 3}`, 0.06);
     } else {
-      // Last ayah in surah — bonus carries to first ayah(s) of next surah
       const nextVerses = this._bySurah.get(hSurah + 1) ?? [];
       const bonusValues = [0.22, 0.12, 0.06];
       for (let i = 0; i < Math.min(nextVerses.length, 3); i++) {
@@ -180,9 +196,6 @@ export class QuranDB {
   /**
    * Length-aware scoring: selects ratio() or fragmentScore() based on
    * the length ratio between transcript and verse.
-   *   - Similar lengths (0.7–1.3): ratio() — symmetric is fair
-   *   - Query shorter  (< 0.7):    fragmentScore() blended — asymmetric partial
-   *   - Query longer   (> 1.3):    ratio() — likely multi-verse
    */
   private static _smartScore(
     textNoSpace: string,
@@ -226,12 +239,16 @@ export class QuranDB {
   ): Record<string, any> | null {
     if (!text.trim()) return null;
 
-    const bonuses = this._continuationBonuses(hint);
-    const noSpaceText = text.replace(/ /g, "");
+    // Normalize the input transcript
+    const normText = normalizeArabic(text);
+    const noSpaceText = normText.replace(/ /g, "");
 
-    // Pass 1: trigram-pruned candidates scored with adaptive _smartScore
-    const candidates = this._getCandidates(text, 200);
-    // Always include continuation-bonus verses in candidate set
+    if (!noSpaceText || noSpaceText.length < 3) return null;
+
+    const bonuses = this._continuationBonuses(hint);
+
+    // Pass 1: trigram-pruned candidates
+    const candidates = this._getCandidates(normText, 200);
     for (const key of bonuses.keys()) {
       const [s, a] = key.split(":").map(Number);
       const idx = this.verses.findIndex(v => v.surah === s && v.ayah === a);
@@ -241,24 +258,32 @@ export class QuranDB {
     const scored: [QuranVerse, number, number, number][] = [];
     for (const idx of candidates) {
       const v = this.verses[idx];
-      let raw = QuranDB._smartScore(noSpaceText, v.phonemes_joined_ns!);
-      if (v.phonemes_joined_no_bsm_ns) {
-        raw = Math.max(raw, QuranDB._smartScore(noSpaceText, v.phonemes_joined_no_bsm_ns));
+      let raw = QuranDB._smartScore(noSpaceText, v.text_norm_ns!);
+      if (v.text_norm_no_bsm_ns) {
+        raw = Math.max(raw, QuranDB._smartScore(noSpaceText, v.text_norm_no_bsm_ns));
       }
-      // Also check spaced ratio for same-length cases (smartScore uses no-space)
-      const spacedRatio = ratio(text, v.phonemes_joined);
+      const spacedRatio = ratio(normText, v.text_norm!);
       raw = Math.max(raw, spacedRatio);
-      if (v.phonemes_joined_no_bsm) {
-        raw = Math.max(raw, ratio(text, v.phonemes_joined_no_bsm));
+      if (v.text_norm_no_bsm) {
+        raw = Math.max(raw, ratio(normText, v.text_norm_no_bsm));
       }
       const bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
       if (bonus > 0) {
-        const sp = QuranDB._suffixPrefixScore(text, v.phonemes_joined);
+        const sp = QuranDB._suffixPrefixScore(normText, v.text_norm!);
         raw = Math.max(raw, sp);
       }
       scored.push([v, raw, bonus, Math.min(raw + bonus, 1.0)]);
     }
-    scored.sort((a, b) => b[3] - a[3]);
+    scored.sort((a, b) => {
+      const diff = b[3] - a[3];
+      if (Math.abs(diff) < 0.001) {
+        // Tiebreaker: prefer verse closest in length to transcript
+        const lenA = a[0].text_norm_ns!.length;
+        const lenB = b[0].text_norm_ns!.length;
+        return Math.abs(lenA - noSpaceText.length) - Math.abs(lenB - noSpaceText.length);
+      }
+      return diff;
+    });
 
     // Top-20 surahs for Pass 2 multi-ayah spans
     const pass2Surahs = new Set<number>();
@@ -266,7 +291,9 @@ export class QuranDB {
       pass2Surahs.add(scored[idx][0].surah);
     }
 
-    const [bestV, bestRaw, bestBonus, bestScoreInit] = scored[0];
+    const [bestV, bestRaw, bestBonus, bestScoreInit] = scored[0] ?? [null, 0, 0, 0];
+    if (!bestV) return null;
+
     let bestScore = bestScoreInit;
     let best: Record<string, any> = {
       ...bestV,
@@ -275,7 +302,6 @@ export class QuranDB {
       bonus: bestBonus,
     };
 
-    // Collect single-verse runners-up before span pass
     const topSingles = scored
       .slice(0, Math.max(returnTopK, 5))
       .map(([v, raw, bon, total]) => ({
@@ -284,24 +310,21 @@ export class QuranDB {
         raw_score: Math.round(raw * 1000) / 1000,
         bonus: Math.round(bon * 1000) / 1000,
         score: Math.round(total * 1000) / 1000,
-        phonemes_joined: v.phonemes_joined.slice(0, 60),
+        text_norm: (v.text_norm ?? "").slice(0, 60),
       }));
 
-    // Pass 2: try multi-ayah spans in surahs from ratio-only top-20
-    // (using pass2Surahs to avoid fragmentScore pollution)
+    // Pass 2: multi-ayah spans
     for (const s of pass2Surahs) {
       const verses = this._bySurah.get(s)!;
       for (let i = 0; i < verses.length; i++) {
         for (let span = 2; span <= maxSpan; span++) {
           if (i + span > verses.length) break;
           const chunk = verses.slice(i, i + span);
-          // Use no-bismillah text for the first verse in a span
-          const firstText =
-            chunk[0].phonemes_joined_no_bsm ?? chunk[0].phonemes_joined;
+          const firstText = chunk[0].text_norm_no_bsm ?? chunk[0].text_norm!;
           const combined = [firstText]
-            .concat(chunk.slice(1).map((c) => c.phonemes_joined))
+            .concat(chunk.slice(1).map((c) => c.text_norm!))
             .join(" ");
-          const raw = ratio(text, combined);
+          const raw = ratio(normText, combined);
           const bonus =
             bonuses.get(`${chunk[0].surah}:${chunk[0].ayah}`) ?? 0.0;
           const score = Math.min(raw + bonus, 1.0);
@@ -312,7 +335,7 @@ export class QuranDB {
               ayah: chunk[0].ayah,
               ayah_end: chunk[chunk.length - 1].ayah,
               text: chunk.map((c) => c.text_uthmani).join(" "),
-              phonemes_joined: combined,
+              text_norm: combined,
               score,
               raw_score: raw,
               bonus,
@@ -333,8 +356,6 @@ export class QuranDB {
 
   /**
    * Narrow match: only score verses near a known position.
-   * Used when we have high confidence about location (post-tracking).
-   * Falls back to full matchVerse() if nothing found in window.
    */
   matchVerseNarrow(
     text: string,
@@ -344,10 +365,10 @@ export class QuranDB {
   ): Record<string, any> | null {
     if (!text.trim()) return null;
 
-    const noSpaceText = text.replace(/ /g, "");
+    const normText = normalizeArabic(text);
+    const noSpaceText = normText.replace(/ /g, "");
     const bonuses = this._continuationBonuses(hint);
 
-    // Collect window: current verse + next windowSize + prev 2
     const window: QuranVerse[] = [];
     let current = this.getVerse(hint[0], hint[1]);
     if (current) window.push(current);
@@ -359,7 +380,6 @@ export class QuranDB {
       window.push(next);
       ref = [next.surah, next.ayah];
     }
-    // Also add 2 previous verses (user might repeat)
     const hintSurahVerses = this.getSurah(hint[0]);
     for (const v of hintSurahVerses) {
       if (v.ayah >= hint[1] - 2 && v.ayah < hint[1]) {
@@ -369,21 +389,20 @@ export class QuranDB {
       }
     }
 
-    // Score narrow window with _smartScore
     const scored: [QuranVerse, number, number, number][] = [];
     for (const v of window) {
-      let raw = QuranDB._smartScore(noSpaceText, v.phonemes_joined_ns!);
-      if (v.phonemes_joined_no_bsm_ns) {
-        raw = Math.max(raw, QuranDB._smartScore(noSpaceText, v.phonemes_joined_no_bsm_ns));
+      let raw = QuranDB._smartScore(noSpaceText, v.text_norm_ns!);
+      if (v.text_norm_no_bsm_ns) {
+        raw = Math.max(raw, QuranDB._smartScore(noSpaceText, v.text_norm_no_bsm_ns));
       }
-      const spacedRatio = ratio(text, v.phonemes_joined);
+      const spacedRatio = ratio(normText, v.text_norm!);
       raw = Math.max(raw, spacedRatio);
-      if (v.phonemes_joined_no_bsm) {
-        raw = Math.max(raw, ratio(text, v.phonemes_joined_no_bsm));
+      if (v.text_norm_no_bsm) {
+        raw = Math.max(raw, ratio(normText, v.text_norm_no_bsm));
       }
       const bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
       if (bonus > 0) {
-        const sp = QuranDB._suffixPrefixScore(text, v.phonemes_joined);
+        const sp = QuranDB._suffixPrefixScore(normText, v.text_norm!);
         raw = Math.max(raw, sp);
       }
       scored.push([v, raw, bonus, Math.min(raw + bonus, 1.0)]);
@@ -400,7 +419,6 @@ export class QuranDB {
       };
     }
 
-    // Fallback: full matchVerse if narrow window didn't work
     return this.matchVerse(text, threshold, 3, hint);
   }
 }

@@ -1,9 +1,8 @@
 import { ratio as levRatio } from "./levenshtein";
-import { QuranDB, partialRatio } from "./quran-db";
-import { computeCorrection } from "./correction";
+import { QuranDB, partialRatio, normalizeArabic } from "./quran-db";
+// import { computeCorrection } from "./correction"; // TODO: rework for Arabic BPE
 import type { QuranVerse, WorkerOutbound, SurroundingVerse } from "./types";
 import {
-  SAMPLE_RATE,
   TRIGGER_SAMPLES,
   MAX_WINDOW_SAMPLES,
   SILENCE_RMS_THRESHOLD,
@@ -20,7 +19,7 @@ import {
 
 export interface TranscribeResult {
   text: string;
-  rawPhonemes: string;
+  rawTokens: string;
 }
 
 type TranscribeFn = (audio: Float32Array) => Promise<TranscribeResult>;
@@ -101,7 +100,7 @@ function getSurroundingVerses(
 }
 
 export class RecitationTracker {
-  private fullAudio = new Float32Array(0);
+  private fullAudio: Float32Array = new Float32Array(0);
   private newAudioCount = 0;
   private lastEmittedRef: [number, number] | null = null;
   private lastEmittedText = "";
@@ -117,10 +116,13 @@ export class RecitationTracker {
   private silenceSamples = 0;
   private staleCycles = 0;
 
-  constructor(
-    private db: QuranDB,
-    private transcribe: TranscribeFn,
-  ) {}
+  private db: QuranDB;
+  private transcribe: TranscribeFn;
+
+  constructor(db: QuranDB, transcribe: TranscribeFn) {
+    this.db = db;
+    this.transcribe = transcribe;
+  }
 
   async feed(samples: Float32Array): Promise<WorkerOutbound[]> {
     const messages: WorkerOutbound[] = [];
@@ -180,13 +182,14 @@ export class RecitationTracker {
     }
     this.newAudioCount = 0;
 
-    // Transcribe
-    const { text, rawPhonemes } = await this.transcribe(this.fullAudio.slice());
+    // Transcribe and normalize Arabic
+    const { text: rawText } = await this.transcribe(this.fullAudio.slice());
+    const text = normalizeArabic(rawText);
     if (!text || text.trim().length < 3) return messages;
 
     const recognizedWords = text.split(" ");
 
-    // Align against known verse (using joined phoneme words)
+    // Align against known verse (using normalized Arabic words)
     const resumeFrom = Math.max(this.trackingLastWordIdx, 0);
     let { matchedIndices } = alignPosition(
       recognizedWords,
@@ -219,7 +222,7 @@ export class RecitationTracker {
           const newVerse = this.db.getVerse(jumpMatch.surah, jumpMatch.ayah);
           if (newVerse) {
             this.lastEmittedRef = [this.trackingVerse.surah, this.trackingVerse.ayah];
-            this.lastEmittedText = this.trackingVerse.phonemes_joined;
+            this.lastEmittedText = this.trackingVerse.text_norm!;
             this._exitTracking("verse jump detected");
             const ref: [number, number] = [newVerse.surah, newVerse.ayah];
             const surrounding = getSurroundingVerses(this.db, newVerse.surah, newVerse.ayah);
@@ -237,7 +240,7 @@ export class RecitationTracker {
             this.prevEmittedRef = this.lastEmittedRef;
             this.prevEmittedText = this.lastEmittedText;
             this.lastEmittedRef = ref;
-            this.lastEmittedText = newVerse.phonemes_joined;
+            this.lastEmittedText = newVerse.text_norm!;
             this._enterTracking(newVerse, ref);
             this.fullAudio = this.fullAudio.slice(-TRIGGER_SAMPLES);
             return messages;
@@ -270,20 +273,8 @@ export class RecitationTracker {
         matched_indices: matchedIndices,
       });
 
-      // Compute and emit word corrections for the recited portion
-      const corrections = computeCorrection(
-        rawPhonemes,
-        this.trackingVerse!.phonemes,
-        wordPos,
-      );
-      if (corrections.length > 0) {
-        messages.push({
-          type: "word_correction",
-          surah: this.trackingVerse!.surah,
-          ayah: this.trackingVerse!.ayah,
-          corrections,
-        });
-      }
+      // TODO: Word-level corrections need reworking for Arabic BPE model
+      // (was designed for phoneme-level alignment)
     }
 
     // Check if verse is complete
@@ -301,7 +292,7 @@ export class RecitationTracker {
           this.trackingVerse!.ayah,
         ];
         this.lastEmittedRef = curRef;
-        this.lastEmittedText = this.trackingVerse!.phonemes_joined;
+        this.lastEmittedText = this.trackingVerse!.text_norm!;
         this.cyclesSinceEmit = 0;
         const nextV = this.db.getNextVerse(curRef[0], curRef[1]);
         this._exitTracking("verse complete");
@@ -326,7 +317,7 @@ export class RecitationTracker {
           this.prevEmittedRef = this.lastEmittedRef;
           this.prevEmittedText = this.lastEmittedText;
           this.lastEmittedRef = nextRef;
-          this.lastEmittedText = nextV.phonemes_joined;
+          this.lastEmittedText = nextV.text_norm!;
           this._enterTracking(nextV, nextRef);
         }
 
@@ -353,8 +344,9 @@ export class RecitationTracker {
     const tail = this.fullAudio.slice(-TRIGGER_SAMPLES);
     if (isSilence(tail)) return messages;
 
-    // Transcribe
-    const { text } = await this.transcribe(this.fullAudio.slice());
+    // Transcribe and normalize Arabic
+    const { text: rawText } = await this.transcribe(this.fullAudio.slice());
+    const text = normalizeArabic(rawText);
     if (!text || text.trim().length < 5) return messages;
 
     // Skip if transcription is mostly residual from last emitted verse
@@ -417,8 +409,8 @@ export class RecitationTracker {
         if (altRunner && altRunner.score >= runnersUp[0].score * 0.97) {
           const altVerse = this.db.getVerse(altRunner.surah, altRunner.ayah);
           if (matchVerse && altVerse) {
-            const w1 = matchVerse.phonemes_joined.split(" ");
-            const w2 = altVerse.phonemes_joined.split(" ");
+            const w1 = matchVerse.text_norm!.split(" ");
+            const w2 = altVerse.text_norm!.split(" ");
             let sharedPrefix = 0;
             for (
               let i = 0;
@@ -484,7 +476,7 @@ export class RecitationTracker {
       this.prevEmittedText = this.lastEmittedText;
       this.lastEmittedRef = effectiveRef;
       this.lastEmittedText =
-        match.phonemes_joined ?? verse?.phonemes_joined ?? "";
+        match.text_norm ?? verse?.text_norm ?? "";
 
       // Enter tracking mode
       if (verse) {
@@ -508,7 +500,7 @@ export class RecitationTracker {
 
   private _charLevelProgress(text: string): number {
     if (!this.trackingVerse) return -1;
-    const joined = this.trackingVerse.phonemes_joined;
+    const joined = this.trackingVerse.text_norm!;
     const words = this.trackingVerseWords;
     if (!joined || words.length === 0) return -1;
 
@@ -559,7 +551,7 @@ export class RecitationTracker {
 
   private _enterTracking(verse: QuranVerse, _ref: [number, number]): void {
     this.trackingVerse = verse;
-    this.trackingVerseWords = verse.phoneme_words;
+    this.trackingVerseWords = verse.text_words!;
     this.trackingLastWordIdx = -1;
     this.silenceSamples = 0;
     this.staleCycles = 0;
