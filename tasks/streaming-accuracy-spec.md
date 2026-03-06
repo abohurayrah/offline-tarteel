@@ -30,8 +30,18 @@ Key files (all in `web/frontend/`):
 ## Phase 3 Results (completed)
 
 **After Phase 2:** 30/53 (56.6%) streaming
-**After Phase 3:** 33/53 (62.3%) streaming, 37/53 non-streaming (no regression)
-**Net gain:** +3 samples over Phase 2, zero non-streaming regressions
+**After Phase 3:** 29-33/53 (54.7-62.3%) streaming, 37/53 non-streaming (no regression)
+**Note:** ONNX runtime non-determinism causes ±2-3 sample variance per run.
+
+### Cross-validation (overfitting check)
+
+| | v1 corpus (53 samples) | v2 corpus (43 samples) | Average |
+|---|---|---|---|
+| **Phase 2** (be8ab60) | 30/53 (56.6%) | 21/43 (48.8%) | 52.7% |
+| **Phase 3** (336d713) | 29/53 (54.7%) | 25/43 (58.1%) | 56.4% |
+| **Delta** | -1 (-1.9%) | +4 (+9.3%) | +3.7% |
+
+Phase 3 generalizes better — gained +4 on unseen v2 corpus while Phase 2 dropped 8 points from v1→v2. No overfitting detected.
 
 ### Phase 3 changes made
 

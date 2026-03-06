@@ -22,7 +22,6 @@ import { createSession, runInference } from "./session-node.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
-const BENCHMARK = resolve(ROOT, "../../benchmark/test_corpus");
 const SAMPLE_RATE = 16000;
 const CHUNK_SECONDS = 0.3;
 const CHUNK_SAMPLES = Math.floor(SAMPLE_RATE * CHUNK_SECONDS);
@@ -35,6 +34,9 @@ const TAIL_SILENCE_SECONDS = 4.0;
 // ---------------------------------------------------------------------------
 const args = process.argv.slice(2);
 const noStreaming = args.includes("--no-streaming");
+const corpusArg = args.find((a) => a.startsWith("--corpus="));
+const corpusName = corpusArg ? corpusArg.split("=")[1] : "test_corpus";
+const BENCHMARK = resolve(ROOT, `../../benchmark/${corpusName}`);
 const sampleFilter = args.find((a) => !a.startsWith("--"));
 
 // ---------------------------------------------------------------------------
