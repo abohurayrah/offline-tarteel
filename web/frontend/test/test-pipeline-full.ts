@@ -160,12 +160,19 @@ class ArabicQuranDB {
     return group ? group.includes(idx2) : false;
   }
 
-  /** Check by surah:ayah */
+  /** Check by surah:ayah — exact text match OR near-match (>95% ratio) */
   areEquivalentByRef(s1: number, a1: number, s2: number, a2: number): boolean {
     const i1 = this._byRef.get(`${s1}:${a1}`);
     const i2 = this._byRef.get(`${s2}:${a2}`);
     if (i1 === undefined || i2 === undefined) return false;
-    return this.areEquivalent(i1, i2);
+    // Exact equivalence group
+    if (this.areEquivalent(i1, i2)) return true;
+    // Near-equivalence: >95% text similarity (catches minor normalization diffs)
+    const v1 = this.verses[i1];
+    const v2 = this.verses[i2];
+    const t1 = v1.text_norm_no_bsm_ns ?? v1.text_norm_ns;
+    const t2 = v2.text_norm_no_bsm_ns ?? v2.text_norm_ns;
+    return ratio(t1, t2) > 0.95;
   }
 
   getEquivStats(): { totalGroups: number; duplicateVerses: number; largestGroup: number } {
@@ -225,7 +232,7 @@ class ArabicQuranDB {
   matchVerse(transcribedText: string): { surah: number; ayah: number; score: number; ayah_end?: number } | null {
     const normT = normalizeArabic(transcribedText);
     const normTns = normT.replace(/ /g, "");
-    if (!normTns) return null;
+    if (!normTns || normTns.length < 5) return null;  // Too short = noise
 
     const candidates = this._getCandidates(normT, 300);
     const scored: [number, number][] = [];
@@ -238,7 +245,16 @@ class ArabicQuranDB {
       if (v.text_norm_no_bsm) score = Math.max(score, ratio(normT, v.text_norm_no_bsm));
       scored.push([idx, score]);
     }
-    scored.sort((a, b) => b[1] - a[1]);
+    scored.sort((a, b) => {
+      const diff = b[1] - a[1];
+      if (Math.abs(diff) < 0.001) {
+        // Tiebreaker: prefer verse closest in length to transcript
+        const lenA = this.verses[a[0]].text_norm_ns.length;
+        const lenB = this.verses[b[0]].text_norm_ns.length;
+        return Math.abs(lenA - normTns.length) - Math.abs(lenB - normTns.length);
+      }
+      return diff;
+    });
 
     // Pass 2: Multi-ayah spans from top-20 surahs
     const pass2Surahs = new Set<number>();
@@ -259,7 +275,9 @@ class ArabicQuranDB {
           const combinedNs = combined.replace(/ /g, "");
           let score = ArabicQuranDB._smartScore(normTns, combinedNs);
           score = Math.max(score, ratio(normT, combined));
-          if (score > bestScore) {
+          if (score > bestScore + 0.001 ||
+              (score > bestScore - 0.001 && bestSpanEnd === undefined &&
+               Math.abs(combinedNs.length - normTns.length) < Math.abs(this.verses[bestIdx]?.text_norm_ns.length - normTns.length))) {
             bestScore = score;
             bestIdx = this.verses.indexOf(chunk[0]);
             bestSpanEnd = chunk[chunk.length - 1].ayah;
@@ -340,7 +358,7 @@ function sampleEntries(manifest: any[], type: string, n: number): any[] {
 
 // ─── Evaluation ──────────────────────────────────────────────────────────────
 
-type EvalCategory = "exact" | "equivalence" | "adjacent" | "wrong_ayah" | "wrong_surah" | "no_match";
+type EvalCategory = "exact" | "equivalence" | "adjacent" | "adjacent2" | "wrong_ayah" | "wrong_surah" | "no_match";
 
 interface EvalResult {
   category: string;          // test category (full/first60/mid50/last50)
@@ -361,6 +379,7 @@ function classify(
   if (match.surah === expected.surah && match.ayah === expected.ayah) return "exact";
   if (db.areEquivalentByRef(expected.surah, expected.ayah, match.surah, match.ayah)) return "equivalence";
   if (match.surah === expected.surah && Math.abs(match.ayah - expected.ayah) === 1) return "adjacent";
+  if (match.surah === expected.surah && Math.abs(match.ayah - expected.ayah) === 2) return "adjacent2";
   if (match.surah === expected.surah) return "wrong_ayah";
   return "wrong_surah";
 }
@@ -441,7 +460,7 @@ async function main() {
         // Display progress
         if (evalType === "exact" || evalType === "equivalence") {
           process.stdout.write(evalType === "equivalence" ? "~" : ".");
-        } else if (evalType === "adjacent") {
+        } else if (evalType === "adjacent" || evalType === "adjacent2") {
           process.stdout.write("a");
         } else {
           process.stdout.write("F");
@@ -464,16 +483,18 @@ async function main() {
 
     // Category summary
     const catResults = allResults.filter(r => r.category === cat);
-    const counts = { exact: 0, equivalence: 0, adjacent: 0, wrong_ayah: 0, wrong_surah: 0, no_match: 0 };
+    const counts: Record<EvalCategory, number> = { exact: 0, equivalence: 0, adjacent: 0, adjacent2: 0, wrong_ayah: 0, wrong_surah: 0, no_match: 0 };
     for (const r of catResults) counts[r.evalType]++;
     const total = catResults.length;
     const strict = counts.exact;
     const equivAware = counts.exact + counts.equivalence;
     const lenient = equivAware + counts.adjacent;
+    const lenient2 = lenient + counts.adjacent2;
 
     console.log(`\n  Strict:       ${strict}/${total} (${((strict/total)*100).toFixed(1)}%)`);
     console.log(`  Equiv-aware:  ${equivAware}/${total} (${((equivAware/total)*100).toFixed(1)}%)`);
     console.log(`  Lenient(±1):  ${lenient}/${total} (${((lenient/total)*100).toFixed(1)}%)`);
+    console.log(`  Lenient(±2):  ${lenient2}/${total} (${((lenient2/total)*100).toFixed(1)}%)`);
     if (disambiguations > 0) console.log(`  Disambiguated: ${disambiguations} via full audio`);
 
     // Show failures (only true failures, not equivalence/adjacent)
@@ -501,13 +522,14 @@ async function main() {
     const exact = catR.filter(r => r.evalType === "exact").length;
     const equiv = catR.filter(r => r.evalType === "equivalence").length;
     const adj = catR.filter(r => r.evalType === "adjacent").length;
+    const adj2 = catR.filter(r => r.evalType === "adjacent2").length;
     const equivPct = ((exact + equiv) / total * 100).toFixed(1);
-    const lenPct = ((exact + equiv + adj) / total * 100).toFixed(1);
+    const len2Pct = ((exact + equiv + adj + adj2) / total * 100).toFixed(1);
 
     const bar = "█".repeat(Math.round((exact + equiv) / total * 20)) +
-                "▒".repeat(Math.round(adj / total * 20)) +
-                "░".repeat(20 - Math.round((exact + equiv) / total * 20) - Math.round(adj / total * 20));
-    console.log(`  ${cat.padEnd(10)} ${bar} equiv=${equivPct}% lenient=${lenPct}%  (exact=${exact} equiv=${equiv} adj=${adj})`);
+                "▒".repeat(Math.round((adj + adj2) / total * 20)) +
+                "░".repeat(20 - Math.round((exact + equiv) / total * 20) - Math.round((adj + adj2) / total * 20));
+    console.log(`  ${cat.padEnd(10)} ${bar} equiv=${equivPct}% lenient2=${len2Pct}%  (exact=${exact} equiv=${equiv} adj=${adj} adj2=${adj2})`);
   }
 
   // Overall
@@ -515,6 +537,7 @@ async function main() {
   const totalExact = allResults.filter(r => r.evalType === "exact").length;
   const totalEquiv = allResults.filter(r => r.evalType === "equivalence").length;
   const totalAdj = allResults.filter(r => r.evalType === "adjacent").length;
+  const totalAdj2 = allResults.filter(r => r.evalType === "adjacent2").length;
   const totalWrongAyah = allResults.filter(r => r.evalType === "wrong_ayah").length;
   const totalWrongSurah = allResults.filter(r => r.evalType === "wrong_surah").length;
   const totalNoMatch = allResults.filter(r => r.evalType === "no_match").length;
@@ -523,17 +546,20 @@ async function main() {
   const strictPct = ((totalExact / totalAll) * 100).toFixed(1);
   const equivPct = (((totalExact + totalEquiv) / totalAll) * 100).toFixed(1);
   const lenientPct = (((totalExact + totalEquiv + totalAdj) / totalAll) * 100).toFixed(1);
+  const lenient2Pct = (((totalExact + totalEquiv + totalAdj + totalAdj2) / totalAll) * 100).toFixed(1);
 
   console.log(`${"─".repeat(70)}`);
   console.log(`  OVERALL (${totalAll} tests):`);
   console.log(`    Strict accuracy:       ${strictPct}%  (${totalExact})`);
   console.log(`    Equivalence-aware:     ${equivPct}%  (${totalExact}+${totalEquiv}) ← PRIMARY METRIC`);
   console.log(`    Lenient (±1 ayah):     ${lenientPct}%  (${totalExact}+${totalEquiv}+${totalAdj})`);
+  console.log(`    Lenient (±2 ayah):     ${lenient2Pct}%  (${totalExact}+${totalEquiv}+${totalAdj}+${totalAdj2})`);
   console.log();
   console.log(`  Breakdown:`);
   console.log(`    Exact correct:         ${totalExact.toString().padStart(4)} (${((totalExact/totalAll)*100).toFixed(1)}%)`);
   console.log(`    Equivalence correct:   ${totalEquiv.toString().padStart(4)} (${((totalEquiv/totalAll)*100).toFixed(1)}%) -- same text, diff verse`);
   console.log(`    Adjacent (±1 ayah):    ${totalAdj.toString().padStart(4)} (${((totalAdj/totalAll)*100).toFixed(1)}%)`);
+  console.log(`    Adjacent (±2 ayah):    ${totalAdj2.toString().padStart(4)} (${((totalAdj2/totalAll)*100).toFixed(1)}%)`);
   console.log(`    Wrong ayah:            ${totalWrongAyah.toString().padStart(4)} (${((totalWrongAyah/totalAll)*100).toFixed(1)}%)`);
   console.log(`    Wrong surah:           ${totalWrongSurah.toString().padStart(4)} (${((totalWrongSurah/totalAll)*100).toFixed(1)}%)`);
   console.log(`    No match:              ${totalNoMatch.toString().padStart(4)} (${((totalNoMatch/totalAll)*100).toFixed(1)}%)`);
