@@ -1,5 +1,6 @@
 import "@fontsource/amiri/400.css";
 import "@fontsource/amiri/700.css";
+import "@fontsource/amiri-quran/400.css";
 import "./style.css";
 
 import { initSurahDropdown, openReportDialog } from "./report-dialog";
@@ -64,6 +65,7 @@ const state = {
   diagnosticEvents: [] as DiagnosticEvent[],
   lastDiagnosticSentAt: 0,
   recentVerseMatches: [] as { surah: number; ayah: number; timestamp: number }[],
+  practiceMode: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -85,6 +87,8 @@ const $btnStart = document.getElementById("btn-start")!;
 const $btnStop = document.getElementById("btn-stop")!;
 const $btnReport = document.getElementById("btn-report")!;
 const $btnRestart = document.getElementById("btn-restart")!;
+const $btnPractice = document.getElementById("btn-practice")!;
+const $app = document.getElementById("app")!;
 
 // ---------------------------------------------------------------------------
 // Arabic numeral converter
@@ -166,9 +170,16 @@ function stripDiacritics(s: string): string {
   return s.replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "");
 }
 
+function normalizeArabic(s: string): string {
+  return stripDiacritics(s)
+    .replace(/\u0671/g, "\u0627")  // ٱ (alef wasla) → ا
+    .replace(/[\u0622\u0623\u0625]/g, "\u0627"); // أ إ آ → ا
+}
+
 function startsWithBismillah(text: string): boolean {
-  const stripped = stripDiacritics(text);
-  return stripped.startsWith(BISMILLAH_BASE) || stripped.startsWith(stripDiacritics(BISMILLAH_BASE));
+  const normalized = normalizeArabic(text);
+  const base = normalizeArabic(BISMILLAH_BASE);
+  return normalized.startsWith(base);
 }
 
 function createVerseGroupElement(group: VerseGroup): HTMLElement {
@@ -176,9 +187,35 @@ function createVerseGroupElement(group: VerseGroup): HTMLElement {
   el.className = "verse-group";
   el.setAttribute("data-surah", String(group.surah));
 
+  // Ornate surah header cartouche
   const header = document.createElement("div");
   header.className = "surah-header";
-  header.textContent = group.surahNameEn;
+
+  const ornL = document.createElement("span");
+  ornL.className = "surah-header-ornament";
+  ornL.textContent = "\uFD3E"; // ﴾
+
+  const content = document.createElement("div");
+  content.className = "surah-header-content";
+
+  const arName = document.createElement("div");
+  arName.className = "surah-header-ar";
+  arName.textContent = group.surahName;
+
+  const enName = document.createElement("div");
+  enName.className = "surah-header-en";
+  enName.textContent = group.surahNameEn;
+
+  content.appendChild(arName);
+  content.appendChild(enName);
+
+  const ornR = document.createElement("span");
+  ornR.className = "surah-header-ornament";
+  ornR.textContent = "\uFD3F"; // ﴿
+
+  header.appendChild(ornL);
+  header.appendChild(content);
+  header.appendChild(ornR);
   el.appendChild(header);
 
   const hasBismillah =
@@ -194,6 +231,10 @@ function createVerseGroupElement(group: VerseGroup): HTMLElement {
     bsmEl.lang = "ar";
     bsmEl.textContent = bsmText;
     el.appendChild(bsmEl);
+
+    const bsmSep = document.createElement("div");
+    bsmSep.className = "bismillah-separator";
+    el.appendChild(bsmSep);
   }
 
   const body = document.createElement("div");
@@ -350,8 +391,12 @@ function handleWordProgress(msg: WordProgressMessage): void {
   const wordEls = verseEl.querySelectorAll<HTMLElement>(".word");
   for (const wordEl of wordEls) {
     const idx = parseInt(wordEl.getAttribute("data-word-idx") || "-1");
+    wordEl.classList.remove("word--current");
     if (idx <= contiguousMax) {
       wordEl.classList.add("word--spoken");
+      if (idx === contiguousMax) {
+        wordEl.classList.add("word--current");
+      }
     }
   }
 }
@@ -640,10 +685,17 @@ document.addEventListener("DOMContentLoaded", () => {
   // Initialize worker (loads model, vocab, quranDB)
   worker.postMessage({ type: "init" });
 
+  // Practice mode toggle
+  $btnPractice.addEventListener("click", () => {
+    state.practiceMode = !state.practiceMode;
+    $app.classList.toggle("practice-mode", state.practiceMode);
+  });
+
   // Button handlers
   $btnStart.addEventListener("click", async () => {
     $readyState.hidden = true;
     $recordingState.hidden = false;
+    $btnPractice.hidden = false;
     state.sessionAudioChunks = [];
     state.lastModelPrediction = null;
     state.hasFirstMatch = false;
@@ -661,7 +713,11 @@ document.addEventListener("DOMContentLoaded", () => {
   $btnStop.addEventListener("click", () => {
     stopAudio();
     $recordingState.hidden = true;
+    $btnPractice.hidden = true;
     $postRecording.hidden = false;
+    // Remove practice mode when stopping
+    state.practiceMode = false;
+    $app.classList.remove("practice-mode");
   });
 
   $btnRestart.addEventListener("click", () => {
@@ -674,6 +730,8 @@ document.addEventListener("DOMContentLoaded", () => {
     $rawTranscript.classList.remove("visible");
     $postRecording.hidden = true;
     $readyState.hidden = false;
+    state.practiceMode = false;
+    $app.classList.remove("practice-mode");
   });
 
   $btnReport.addEventListener("click", () => {

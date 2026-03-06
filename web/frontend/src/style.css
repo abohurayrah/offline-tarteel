@@ -18,6 +18,7 @@
   --accent-warm: rgba(180, 140, 60, 0.08);
   --accent-warm-strong: rgba(180, 140, 60, 0.15);
   --font-arabic: "Amiri", serif;
+  --font-quran: "Amiri Quran", "Amiri", serif;
   --font-system: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --max-width: 900px;
 }
@@ -124,9 +125,42 @@ body {
   gap: 3rem;
 }
 
-/* ── Verse group ── */
+/* ── Verse group (Mushaf page) ── */
 .verse-group {
+  position: relative;
+  padding: 2.5rem 2rem 2rem;
   animation: group-enter 0.6s ease-out;
+
+  /* Multi-layer Mushaf page border */
+  border: 2px solid #c9a961;
+  border-radius: 2px;
+  background: var(--bg);
+  box-shadow:
+    inset 0 0 0 4px var(--bg),
+    inset 0 0 0 5px #d4c4a8,
+    0 4px 24px rgba(139, 115, 85, 0.12),
+    0 1px 4px rgba(139, 115, 85, 0.08);
+}
+
+/* Corner ornaments */
+.verse-group::before,
+.verse-group::after {
+  content: "\2726";
+  position: absolute;
+  color: #c9a961;
+  font-size: 0.7rem;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.verse-group::before {
+  top: 0.45rem;
+  right: 0.45rem;
+}
+
+.verse-group::after {
+  bottom: 0.45rem;
+  left: 0.45rem;
 }
 
 .verse-group--exiting {
@@ -155,36 +189,133 @@ body {
   }
 }
 
-/* ── Surah header ── */
+/* ── Surah header (Mushaf cartouche) ── */
 .surah-header {
-  font-family: var(--font-system);
-  font-size: 1rem;
-  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
   text-align: center;
-  padding: 0.5rem 0 1.5rem;
-  border-bottom: 1px solid var(--accent-warm);
-  margin-bottom: 1rem;
-  letter-spacing: 0.04em;
+  padding: 0.75rem 1.5rem;
+  margin-bottom: 1.5rem;
+  position: relative;
+  border: 1.5px solid #c9a961;
+  border-radius: 24px;
+  background: linear-gradient(
+    180deg,
+    rgba(201, 169, 97, 0.07) 0%,
+    rgba(201, 169, 97, 0.02) 100%
+  );
+}
+
+/* Decorative double-line above and below */
+.surah-header::before,
+.surah-header::after {
+  content: "";
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    #d4c4a8 15%,
+    #c9a961 50%,
+    #d4c4a8 85%,
+    transparent 100%
+  );
+}
+
+.surah-header::before { top: -5px; }
+.surah-header::after { bottom: -5px; }
+
+/* Ornamental ﴾ ﴿ parentheses */
+.surah-header-ornament {
+  font-family: var(--font-quran);
+  font-size: 1.8rem;
+  color: #c9a961;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.surah-header-content {
+  min-width: 0;
+}
+
+.surah-header-ar {
+  font-family: var(--font-quran);
+  font-size: 1.4rem;
+  color: var(--text);
+  direction: rtl;
+  line-height: 1.8;
+  white-space: nowrap;
+}
+
+.surah-header-en {
+  font-family: var(--font-system);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
   text-transform: uppercase;
+  margin-top: 0.1rem;
 }
 
 /* ── Bismillah ── */
 .bismillah {
-  font-family: var(--font-arabic);
-  font-size: 1.5rem;
-  color: var(--text-light);
+  font-family: var(--font-quran);
+  font-size: 1.6rem;
+  color: var(--text);
   text-align: center;
-  padding: 0.75rem 0 0.5rem;
+  padding: 0.75rem 0 0;
+  line-height: 2;
+  letter-spacing: 0.02em;
+  margin-bottom: 0.5rem;
+}
+
+/* Decorative separator after Bismillah */
+.bismillah-separator {
+  width: 120px;
+  height: 1px;
+  margin: 0.5rem auto 0.75rem;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    #d4c4a8 20%,
+    #c9a961 50%,
+    #d4c4a8 80%,
+    transparent 100%
+  );
+  position: relative;
+}
+
+.bismillah-separator::before {
+  content: "\274A";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 0.55rem;
+  color: #c9a961;
+  background: var(--bg);
+  padding: 0 0.5rem;
+  line-height: 1;
 }
 
 /* ── Verse text container (flowing RTL paragraph) ── */
 .verse-body {
-  font-family: var(--font-arabic);
-  font-size: 1.75rem;
-  line-height: 2.6;
-  text-align: right;
+  font-family: var(--font-quran);
+  font-size: 1.85rem;
+  line-height: 2.8;
+  text-align: justify;
+  text-align-last: right;
+  text-justify: inter-word;
   direction: rtl;
   padding: 0.5rem 0;
+  word-spacing: -0.02em;
+  letter-spacing: 0.01em;
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1, "ccmp" 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* ── Individual verse (inline) ── */
@@ -215,7 +346,9 @@ body {
 
 /* ── Individual word (within a verse) ── */
 .word {
-  transition: color 0.15s ease, font-weight 0.15s ease;
+  transition: color 0.3s ease, font-weight 0.2s ease, filter 0.4s ease,
+    opacity 0.4s ease, text-shadow 0.3s ease, transform 0.2s ease;
+  display: inline-block;
 }
 
 /* Active verse: all words full color, spoken words become bold */
@@ -226,6 +359,21 @@ body {
 .verse--active .word--spoken {
   color: var(--text);
   font-weight: 700;
+}
+
+/* Active word glow — the "just reached" word gets a warm highlight */
+.verse--active .word--current {
+  text-shadow: 0 0 16px rgba(184, 152, 106, 0.6), 0 0 6px rgba(184, 152, 106, 0.35);
+  color: #4a3b20;
+}
+
+/* In practice mode, make the current word pop more with a subtle background */
+.practice-mode .verse--active .word--current {
+  text-shadow: 0 0 20px rgba(184, 152, 106, 0.7), 0 0 8px rgba(184, 152, 106, 0.4);
+  background: var(--accent-warm-strong);
+  border-radius: 3px;
+  padding: 0 0.15em;
+  margin: 0 -0.15em;
 }
 
 .verse--active .word--error {
@@ -240,25 +388,137 @@ body {
   color: inherit;
 }
 
-/* ── Ayah end marker (۝) ── */
-.verse-marker {
-  font-size: 1.5rem;
-  color: var(--text-muted);
+/* ── Practice mode ── */
+/* When practice mode is active, hide unspoken words */
+.practice-mode .verse--active .word:not(.word--spoken),
+.practice-mode .verse--upcoming .word {
+  filter: blur(10px);
+  opacity: 0.15;
   user-select: none;
-  transition: color 0.35s ease;
-  padding: 0 0.2rem;
+  pointer-events: none;
+}
+
+/* Spoken words reveal smoothly */
+.practice-mode .verse--active .word--spoken {
+  filter: blur(0);
+  opacity: 1;
+  animation: word-reveal 0.35s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* Recited verses stay visible in practice mode */
+.practice-mode .verse--recited .word {
+  filter: blur(0);
+  opacity: 0.6;
+}
+
+/* Verse markers also blur in practice mode */
+.practice-mode .verse--active .verse-marker,
+.practice-mode .verse--upcoming .verse-marker {
+  filter: blur(8px);
+  opacity: 0.15;
+  transition: filter 0.4s ease, opacity 0.4s ease;
+}
+
+.practice-mode .verse--recited .verse-marker {
+  filter: blur(0);
+  opacity: 0.6;
+}
+
+@keyframes word-reveal {
+  0% {
+    filter: blur(10px);
+    opacity: 0.15;
+    transform: scale(0.95);
+  }
+  60% {
+    filter: blur(0);
+    opacity: 1;
+    transform: scale(1.04);
+  }
+  100% {
+    filter: blur(0);
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ── Practice mode toggle button ── */
+.practice-toggle {
+  position: fixed;
+  bottom: 1rem;
+  left: 1rem;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(200, 190, 170, 0.3);
+  background: rgba(245, 240, 232, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease,
+    box-shadow 0.2s ease, transform 0.15s ease;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+}
+
+.practice-toggle:hover {
+  color: var(--text-light);
+  border-color: rgba(200, 190, 170, 0.5);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.practice-toggle:active {
+  transform: scale(0.93);
+}
+
+/* Icon states */
+.practice-icon--on {
+  display: none;
+}
+
+.practice-mode .practice-toggle {
+  background: rgba(184, 152, 106, 0.15);
+  border-color: rgba(184, 152, 106, 0.4);
+  color: #a07830;
+  box-shadow: 0 0 12px rgba(184, 152, 106, 0.2);
+}
+
+.practice-mode .practice-icon--off {
+  display: none;
+}
+
+.practice-mode .practice-icon--on {
+  display: block;
+}
+
+/* ── Ayah end marker (۝ + number) ── */
+.verse-marker {
+  font-family: var(--font-quran);
+  font-size: 1.3rem;
+  color: #c5a55a;
+  user-select: none;
+  transition: color 0.35s ease, opacity 0.35s ease;
+  padding: 0 0.25rem;
+  vertical-align: middle;
+  display: inline;
 }
 
 .verse--active .verse-marker {
-  color: var(--text-light);
+  color: #b8986a;
 }
 
 .verse--upcoming .verse-marker {
-  color: var(--text-muted);
+  color: #c5a55a;
+  opacity: 0.7;
 }
 
 .verse--recited .verse-marker {
-  color: var(--text-muted);
+  color: #c5a55a;
+  opacity: 0.45;
 }
 
 /* ── Raw transcript fallback ── */
@@ -664,27 +924,64 @@ body {
 /* ── Responsive ── */
 @media (max-width: 960px) {
   .verse-body {
-    font-size: 1.5rem;
-    line-height: 2.4;
+    font-size: 1.6rem;
+    line-height: 2.6;
+  }
+
+  .bismillah {
+    font-size: 1.4rem;
   }
 
   .verse-marker {
+    font-size: 1.15rem;
+  }
+
+  .surah-header-ar {
     font-size: 1.3rem;
   }
 }
 
 @media (max-width: 640px) {
   #app {
-    padding: 2rem 1rem 7rem;
+    padding: 2rem 0.75rem 7rem;
+  }
+
+  .verse-group {
+    padding: 1.75rem 1.25rem 1.5rem;
+    box-shadow:
+      inset 0 0 0 3px var(--bg),
+      inset 0 0 0 4px #d4c4a8,
+      0 2px 12px rgba(139, 115, 85, 0.1);
   }
 
   .verse-body {
-    font-size: 1.35rem;
-    line-height: 2.2;
+    font-size: 1.4rem;
+    line-height: 2.4;
+  }
+
+  .bismillah {
+    font-size: 1.25rem;
   }
 
   .verse-marker {
+    font-size: 1rem;
+  }
+
+  .surah-header {
+    padding: 0.6rem 1.2rem;
+    gap: 0.5rem;
+  }
+
+  .surah-header-ornament {
+    font-size: 1.4rem;
+  }
+
+  .surah-header-ar {
     font-size: 1.15rem;
+  }
+
+  .bismillah-separator {
+    width: 80px;
   }
 
   #listening-status .listening-status-main {
@@ -693,7 +990,20 @@ body {
 }
 
 @media (max-width: 380px) {
+  .verse-group {
+    padding: 1.5rem 1rem 1.25rem;
+  }
+
   .verse-body {
+    font-size: 1.25rem;
+    line-height: 2.2;
+  }
+
+  .surah-header-ar {
+    font-size: 1rem;
+  }
+
+  .surah-header-ornament {
     font-size: 1.2rem;
   }
 }
