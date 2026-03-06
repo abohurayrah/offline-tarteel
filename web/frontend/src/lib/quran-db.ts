@@ -1,4 +1,4 @@
-import { ratio, fragmentScore } from "./levenshtein";
+import { ratio, fragmentScore, slidingWindowScore } from "./levenshtein";
 import type { QuranVerse } from "./types";
 
 const _BSM_PHONEMES_JOINED = "bismi allahi arraHmaani arraHiimi";
@@ -154,6 +154,17 @@ export class QuranDB {
       if (v.phonemes_joined_no_bsm) {
         raw = Math.max(raw, ratio(text, v.phonemes_joined_no_bsm));
       }
+      // Sliding window: if transcript is shorter than verse,
+      // find best substring alignment
+      if (noSpaceText.length < v.phonemes_joined_ns!.length * 0.9) {
+        const sw = slidingWindowScore(noSpaceText, v.phonemes_joined_ns!);
+        if (v.phonemes_joined_no_bsm_ns) {
+          const swNoBsm = slidingWindowScore(noSpaceText, v.phonemes_joined_no_bsm_ns);
+          raw = Math.max(raw, sw, swNoBsm);
+        } else {
+          raw = Math.max(raw, sw);
+        }
+      }
       const bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
       if (bonus > 0) {
         const sp = QuranDB._suffixPrefixScore(text, v.phonemes_joined);
@@ -164,34 +175,9 @@ export class QuranDB {
     scored.sort((a, b) => b[3] - a[3]);
 
     // Save top-20 surahs from ratio-only ranking for Pass 2 surah selection.
-    // This prevents fragmentScore from polluting which surahs get span-checked.
     const pass2Surahs = new Set<number>();
     for (let idx = 0; idx < Math.min(scored.length, 20); idx++) {
       pass2Surahs.add(scored[idx][0].surah);
-    }
-
-    // Pass 1.5: boost scores with fragmentScore (directional matching).
-    // fragmentScore asks "how much of the transcript does this verse explain?"
-    // Used as a BOOST (not replacement) to avoid ranking pollution:
-    //   boosted = ratio + (fragmentScore - ratio) * 0.7
-    // This lifts correct long verses above same-length wrong ones, but can't
-    // let random long verses completely hijack the ranking.
-    if (noSpaceText.length >= 8) {
-      let resorted = false;
-      for (let i = 0; i < scored.length; i++) {
-        const [v, raw, bonus] = scored[i];
-        if (noSpaceText.length >= v.phonemes_joined_ns!.length * 0.8) continue;
-        let frag = fragmentScore(noSpaceText, v.phonemes_joined_ns!);
-        if (v.phonemes_joined_no_bsm_ns) {
-          frag = Math.max(frag, fragmentScore(noSpaceText, v.phonemes_joined_no_bsm_ns));
-        }
-        if (frag > raw) {
-          const boosted = raw + (frag - raw) * 0.7;
-          scored[i] = [v, boosted, bonus, Math.min(boosted + bonus, 1.0)];
-          resorted = true;
-        }
-      }
-      if (resorted) scored.sort((a, b) => b[3] - a[3]);
     }
 
     const [bestV, bestRaw, bestBonus, bestScoreInit] = scored[0];

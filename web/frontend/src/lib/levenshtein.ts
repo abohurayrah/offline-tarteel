@@ -81,3 +81,59 @@ export function fragmentScore(query: string, ref: string): number {
   if (query.length === 0) return 1.0;
   return Math.max(0, 1 - semiGlobalDistance(query, ref) / query.length);
 }
+
+/**
+ * Sliding window score: slides a window of approximately query-length
+ * across the reference string, computing ratio() at each position.
+ * Returns the best ratio found, plus a small positional bonus for
+ * matches near the beginning of the reference (verse-start).
+ *
+ * This handles mid-verse entry: if the reciter starts in the middle
+ * of a verse, the best window will align there.
+ */
+export function slidingWindowScore(query: string, ref: string): number {
+  if (!query || !ref) return 0.0;
+  if (query.length >= ref.length) return ratio(query, ref);
+
+  const qLen = query.length;
+  // Try windows of varying sizes: 80% to 120% of query length
+  const minWindow = Math.max(1, Math.floor(qLen * 0.8));
+  const maxWindow = Math.min(ref.length, Math.ceil(qLen * 1.2));
+
+  let bestScore = 0.0;
+  let bestPos = 0;
+
+  for (let w = minWindow; w <= maxWindow; w += Math.max(1, Math.floor((maxWindow - minWindow) / 3))) {
+    // Slide window of size w across reference
+    const step = Math.max(1, Math.floor(w / 4)); // Step by 25% of window for speed
+    for (let i = 0; i <= ref.length - w; i += step) {
+      const window = ref.slice(i, i + w);
+      const r = ratio(query, window);
+      if (r > bestScore) {
+        bestScore = r;
+        bestPos = i;
+      }
+    }
+    // Refine: check around the best position with step=1
+    if (step > 1) {
+      const refineStart = Math.max(0, bestPos - step);
+      const refineEnd = Math.min(ref.length - w, bestPos + step);
+      for (let i = refineStart; i <= refineEnd; i++) {
+        const window = ref.slice(i, i + w);
+        const r = ratio(query, window);
+        if (r > bestScore) {
+          bestScore = r;
+          bestPos = i;
+        }
+      }
+    }
+  }
+
+  // Positional bonus: matches at the start of the verse get a small boost
+  // (most recitations start from verse beginning)
+  // Max bonus: +0.05 at position 0, decaying linearly to 0 at 30% into verse
+  const posRatio = bestPos / ref.length;
+  const posBonus = posRatio < 0.3 ? 0.05 * (1 - posRatio / 0.3) : 0;
+
+  return Math.min(1.0, bestScore + posBonus);
+}
