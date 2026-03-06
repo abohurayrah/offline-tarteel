@@ -135,6 +135,86 @@ export class QuranDB {
     return best;
   }
 
+  /**
+   * Narrow match: only score verses in a small window around the hint.
+   * Used when we have high confidence about position (e.g., just exited tracking).
+   * Falls back to full matchVerse() if no narrow match found above threshold.
+   */
+  matchVerseNarrow(
+    text: string,
+    hint: [number, number],
+    windowSize = 5,
+    threshold = 0.35,
+  ): Record<string, any> | null {
+    if (!text.trim()) return null;
+
+    const noSpaceText = text.replace(/ /g, "");
+    const bonuses = this._continuationBonuses(hint);
+
+    // Collect the window: current verse + next windowSize verses in sequence
+    const window: QuranVerse[] = [];
+    let current = this.getVerse(hint[0], hint[1]);
+    if (current) window.push(current);
+
+    let ref: [number, number] = [hint[0], hint[1]];
+    for (let i = 0; i < windowSize; i++) {
+      const next = this.getNextVerse(ref[0], ref[1]);
+      if (!next) break;
+      window.push(next);
+      ref = [next.surah, next.ayah];
+    }
+
+    // Also add 2 previous verses (user might repeat)
+    const hintSurahVerses = this.getSurah(hint[0]);
+    for (const v of hintSurahVerses) {
+      if (v.ayah >= hint[1] - 2 && v.ayah < hint[1]) {
+        if (!window.find(w => w.surah === v.surah && w.ayah === v.ayah)) {
+          window.push(v);
+        }
+      }
+    }
+
+    // Score only the narrow window
+    const scored: [QuranVerse, number, number, number][] = [];
+    for (const v of window) {
+      let raw = ratio(text, v.phonemes_joined);
+      if (v.phonemes_joined_no_bsm) {
+        raw = Math.max(raw, ratio(text, v.phonemes_joined_no_bsm));
+      }
+      // Also use fragmentScore for partial matches
+      if (noSpaceText.length >= 5 && noSpaceText.length < v.phonemes_joined_ns!.length * 0.8) {
+        const frag = fragmentScore(noSpaceText, v.phonemes_joined_ns!);
+        if (v.phonemes_joined_no_bsm_ns) {
+          const fragNoBsm = fragmentScore(noSpaceText, v.phonemes_joined_no_bsm_ns);
+          raw = Math.max(raw, frag, fragNoBsm);
+        } else {
+          raw = Math.max(raw, frag);
+        }
+      }
+
+      const bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
+      if (bonus > 0) {
+        const sp = QuranDB._suffixPrefixScore(text, v.phonemes_joined);
+        raw = Math.max(raw, sp);
+      }
+      scored.push([v, raw, bonus, Math.min(raw + bonus, 1.0)]);
+    }
+    scored.sort((a, b) => b[3] - a[3]);
+
+    if (scored.length > 0 && scored[0][3] >= threshold) {
+      const [bestV, bestRaw, bestBonus, bestScore] = scored[0];
+      return {
+        ...bestV,
+        score: bestScore,
+        raw_score: bestRaw,
+        bonus: bestBonus,
+      };
+    }
+
+    // Fallback: full matchVerse if narrow window didn't work
+    return this.matchVerse(text, threshold, 3, hint);
+  }
+
   matchVerse(
     text: string,
     threshold = 0.3,
