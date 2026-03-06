@@ -211,6 +211,39 @@ export class RecitationTracker {
 
     if (!advanced) {
       this.staleCycles++;
+      // Before giving up, check if user jumped to a nearby verse
+      if (this.staleCycles >= 2 && text.length >= 8 && this.trackingVerse) {
+        const jumpHint: [number, number] = [this.trackingVerse.surah, this.trackingVerse.ayah];
+        const jumpMatch = this.db.matchVerseNarrow(text, jumpHint, 3, 0.5);
+        if (jumpMatch && (jumpMatch.surah !== this.trackingVerse.surah || jumpMatch.ayah !== this.trackingVerse.ayah)) {
+          const newVerse = this.db.getVerse(jumpMatch.surah, jumpMatch.ayah);
+          if (newVerse) {
+            this.lastEmittedRef = [this.trackingVerse.surah, this.trackingVerse.ayah];
+            this.lastEmittedText = this.trackingVerse.phonemes_joined;
+            this._exitTracking("verse jump detected");
+            const ref: [number, number] = [newVerse.surah, newVerse.ayah];
+            const surrounding = getSurroundingVerses(this.db, newVerse.surah, newVerse.ayah);
+            messages.push({
+              type: "verse_match",
+              surah: newVerse.surah,
+              ayah: newVerse.ayah,
+              verse_text: newVerse.text_uthmani,
+              surah_name: newVerse.surah_name,
+              confidence: Math.round(jumpMatch.score * 100) / 100,
+              surrounding_verses: surrounding,
+            });
+            this.hasEverMatched = true;
+            this.cyclesSinceEmit = 0;
+            this.prevEmittedRef = this.lastEmittedRef;
+            this.prevEmittedText = this.lastEmittedText;
+            this.lastEmittedRef = ref;
+            this.lastEmittedText = newVerse.phonemes_joined;
+            this._enterTracking(newVerse, ref);
+            this.fullAudio = this.fullAudio.slice(-TRIGGER_SAMPLES);
+            return messages;
+          }
+        }
+      }
       if (this.staleCycles >= STALE_CYCLE_LIMIT) {
         this._exitTracking(
           `stale (${this.staleCycles} cycles, no progress)`,
@@ -330,14 +363,24 @@ export class RecitationTracker {
       if (residual > 0.7) return messages;
     }
 
-    // Match against QuranDB
-    const match = this.db.matchVerse(
-      text,
-      RAW_TRANSCRIPT_THRESHOLD,
-      4,
-      this.lastEmittedRef,
-      5,
-    );
+    // Match against QuranDB — use narrow matching if we have recent context
+    let match: Record<string, any> | null;
+    if (this.lastEmittedRef && this.cyclesSinceEmit <= 3) {
+      match = this.db.matchVerseNarrow(
+        text,
+        this.lastEmittedRef,
+        5,
+        RAW_TRANSCRIPT_THRESHOLD,
+      );
+    } else {
+      match = this.db.matchVerse(
+        text,
+        RAW_TRANSCRIPT_THRESHOLD,
+        4,
+        this.lastEmittedRef,
+        5,
+      );
+    }
 
     // Anti-cascade: shortly after an emit, require higher threshold for
     // non-continuation jumps to prevent false positives from cascading
