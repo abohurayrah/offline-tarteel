@@ -232,7 +232,7 @@ class ArabicQuranDB {
   matchVerse(transcribedText: string): { surah: number; ayah: number; score: number; ayah_end?: number } | null {
     const normT = normalizeArabic(transcribedText);
     const normTns = normT.replace(/ /g, "");
-    if (!normTns || normTns.length < 5) return null;  // Too short = noise
+    if (!normTns || normTns.length < 3) return null;  // Too short = noise (allow muqatta'at)
 
     const candidates = this._getCandidates(normT, 300);
     const scored: [number, number][] = [];
