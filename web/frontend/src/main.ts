@@ -18,9 +18,13 @@ import type {
 import type { MushafPageData } from "./lib/mushaf-renderer";
 import {
   renderPage as renderMushafPage,
+  revealVerse as mushafRevealVerse,
   highlightWord as mushafHighlightWord,
+  highlightErrors as mushafHighlightErrors,
+  clearErrors as mushafClearErrors,
   revealAll as mushafRevealAll,
   hideUnrevealed as mushafHideUnrevealed,
+  getPageVerses,
 } from "./lib/mushaf-renderer";
 
 // ---------------------------------------------------------------------------
@@ -96,8 +100,7 @@ const $loadingStatus = document.getElementById("loading-status")!;
 const $loadingProgress = document.getElementById("loading-progress")!;
 const $loadingDetail = document.getElementById("loading-detail")!;
 const $postRecording = document.getElementById("post-recording")!;
-const $btnStart = document.getElementById("btn-start")!;
-const $btnStop = document.getElementById("btn-stop")!;
+const $btnRecToggle = document.getElementById("btn-rec-toggle")!;
 const $btnReport = document.getElementById("btn-report")!;
 const $btnRestart = document.getElementById("btn-restart")!;
 const $btnPractice = document.getElementById("btn-practice")!;
@@ -192,36 +195,250 @@ async function navigateToMushafPage(pageNum: number): Promise<void> {
   setTimeout(() => $mushafPage.classList.remove("mushaf-page--enter"), 350);
 }
 
-// Handle verse match in mushaf mode — only navigate, don't reveal
+// Track which verses actually had word progress (not just verse_match)
+const _wordTrackedVerses = new Set<string>();
+// Track whether we've done the initial prior-verse reveal for the current page
+let _priorRevealDoneForPage = 0;
+
+// Handle verse match in mushaf mode — navigate + conditionally reveal prior verses
 async function handleMushafVerseMatch(msg: VerseMatchMessage): Promise<void> {
+  const prevPrediction = state.lastModelPrediction;
   state.lastModelPrediction = { surah: msg.surah, ayah: msg.ayah, confidence: msg.confidence };
+
+  console.log(
+    `%c[VERSE_MATCH] ${msg.surah}:${msg.ayah} (conf: ${(msg.confidence * 100).toFixed(1)}%)` +
+    (prevPrediction ? ` prev: ${prevPrediction.surah}:${prevPrediction.ayah}` : ` (first)`),
+    "color: #C2A05B; font-weight: bold",
+  );
 
   if (!state.hasFirstMatch) {
     state.hasFirstMatch = true;
     $indicator.classList.add("has-verses");
+    console.log("[MUSHAF] First match — indicator activated");
   }
 
   const targetPage = getPageForVerse(msg.surah, msg.ayah);
-  if (!targetPage) return;
-
-  // Auto-navigate to the correct page
-  if (targetPage !== state.currentMushafPage) {
-    await navigateToMushafPage(targetPage);
+  if (!targetPage) {
+    console.warn(`[MUSHAF] No page found for ${msg.surah}:${msg.ayah}`);
+    return;
   }
-  // Word-by-word reveal is handled by handleMushafWordProgress
+
+  // Previous verse stays as-is — spoken words are already visible via
+  // mp-word--spoken from word_progress. Only mark fully-read verses as
+  // "revealed" (done in handleMushafWordProgress when ALL words matched).
+  // This prevents the cascade where model jumping to next verse auto-reveals
+  // the entire previous verse even if only a few words were spoken.
+
+  const isNewPage = targetPage !== state.currentMushafPage;
+  const isFirstOnPage = isNewPage || _priorRevealDoneForPage !== targetPage;
+
+  // Navigate if needed
+  if (isNewPage) {
+    console.log(`[MUSHAF] Navigating: page ${state.currentMushafPage} → ${targetPage}`);
+  }
+
+  // Reveal prior verses ONLY on first match on this page (user started mid-page)
+  if (isFirstOnPage && state.mushafPages) {
+    _priorRevealDoneForPage = targetPage;
+    const pageData = state.mushafPages[targetPage - 1];
+    const pageVerses = getPageVerses(pageData);
+    const matchKey = `${msg.surah}:${msg.ayah}`;
+    const priorRevealed: string[] = [];
+    for (const vk of pageVerses) {
+      if (vk === matchKey) break;
+      if (!state.revealedVerses.has(vk)) priorRevealed.push(vk);
+      state.revealedVerses.add(vk);
+    }
+    if (priorRevealed.length > 0) {
+      console.log(`[MUSHAF] First match on page — revealing ${priorRevealed.length} prior verses:`, priorRevealed.join(", "));
+    }
+  }
+
+  // Navigate (re-renders with updated revealedVerses including priors)
+  if (isNewPage) {
+    await navigateToMushafPage(targetPage);
+  } else if (isFirstOnPage && state.mushafPages) {
+    // Already on page but first match — reveal priors in DOM
+    const pageData = state.mushafPages[targetPage - 1];
+    const pageVerses = getPageVerses(pageData);
+    const matchKey = `${msg.surah}:${msg.ayah}`;
+    for (const vk of pageVerses) {
+      if (vk === matchKey) break;
+      const [s, a] = vk.split(":");
+      mushafRevealVerse($mushafPage, parseInt(s), parseInt(a));
+    }
+  }
+
+  console.log(
+    `[MUSHAF] State: page=${state.currentMushafPage}, revealed=${state.revealedVerses.size} verses, wordTracked=${_wordTrackedVerses.size}, practice=${state.practiceMode}`,
+  );
 }
+
+// Mushaf word progress accumulator (same pattern as flowing mode)
+let _mushafMatchedWords = new Set<number>();
+let _mushafTrackingKey = "";
+// Track error words — blocks progression past them
+let _mushafErrorWords = new Set<number>();
+let _mushafErrorKey = "";
 
 // Handle word progress in mushaf mode — reveal words one at a time
 function handleMushafWordProgress(msg: WordProgressMessage): void {
   const targetPage = getPageForVerse(msg.surah, msg.ayah);
-  if (!targetPage || targetPage !== state.currentMushafPage) return;
 
-  // Highlight only the matched words (word-by-word reveal)
-  mushafHighlightWord($mushafPage, msg.surah, msg.ayah, msg.matched_indices);
+  if (!targetPage) {
+    console.warn(`[WORD] No page for ${msg.surah}:${msg.ayah}`);
+    return;
+  }
+  if (targetPage !== state.currentMushafPage) {
+    console.warn(
+      `[WORD] ${msg.surah}:${msg.ayah} word ${msg.word_index}/${msg.total_words} — wrong page (verse on p${targetPage}, showing p${state.currentMushafPage})`,
+    );
+    return;
+  }
+
+  // Accumulate matched indices across events for the same verse
+  const key = `${msg.surah}:${msg.ayah}`;
+  if (key !== _mushafTrackingKey) {
+    _mushafMatchedWords = new Set<number>();
+    _mushafTrackingKey = key;
+  }
+  for (const idx of msg.matched_indices) {
+    _mushafMatchedWords.add(idx);
+  }
+
+  // Track that this verse had actual word progress (used by verse_match to decide reveals)
+  _wordTrackedVerses.add(key);
+  const accumulated = Array.from(_mushafMatchedWords).sort((a, b) => a - b);
+
+  // Clear errors for this verse when new word progress comes in (user retrying)
+  if (_mushafErrorKey === key && _mushafErrorWords.size > 0) {
+    // Only clear errors for words that are now matched
+    for (const idx of msg.matched_indices) {
+      _mushafErrorWords.delete(idx);
+    }
+    if (_mushafErrorWords.size === 0) {
+      mushafClearErrors($mushafPage);
+    }
+  }
+
+  // Compute contiguous from 0, stopping at error words
+  let contiguousMax = -1;
+  for (let i = 0; i < msg.total_words; i++) {
+    if (_mushafErrorWords.has(i)) break; // Block at error word
+    if (_mushafMatchedWords.has(i)) contiguousMax = i;
+    else break;
+  }
+
+  // Detect skipped words (gaps) — these are likely misreads
+  // e.g., accumulated=[0,1,2,5,6] with contiguousMax=2 → words 3,4 were skipped
+  const beyondContiguous = accumulated.filter((i) => i > contiguousMax + 1);
+  if (beyondContiguous.length > 0 && contiguousMax >= 0) {
+    const firstBeyond = beyondContiguous[0];
+    const skippedIndices: number[] = [];
+    for (let i = contiguousMax + 1; i < firstBeyond; i++) {
+      if (!_mushafMatchedWords.has(i) && !_mushafErrorWords.has(i)) {
+        skippedIndices.push(i);
+      }
+    }
+    if (skippedIndices.length > 0) {
+      _mushafErrorKey = key;
+      for (const idx of skippedIndices) {
+        _mushafErrorWords.add(idx);
+      }
+      mushafHighlightErrors($mushafPage, msg.surah, msg.ayah, Array.from(_mushafErrorWords));
+      console.log(
+        `%c[MISREAD] ${msg.surah}:${msg.ayah} words [${skippedIndices.join(",")}] skipped — marking as errors`,
+        "color: #ff6b6b; font-weight: bold",
+      );
+    }
+  }
+
+  // Look up Arabic word text from page data for logging
+  const verseWordMap: Record<number, string> = {};
+  if (state.mushafPages) {
+    const pageData = state.mushafPages[targetPage - 1];
+    for (const line of pageData.lines) {
+      if (line.type === "text" && line.words) {
+        for (const w of line.words) {
+          const [s, a, widx] = w.location.split(":");
+          if (s === String(msg.surah) && a === String(msg.ayah)) {
+            verseWordMap[parseInt(widx) - 1] = w.word; // 0-indexed
+          }
+        }
+      }
+    }
+  }
+
+  // Build spoken text so far (contiguous words from 0)
+  const spokenWords: string[] = [];
+  for (let i = 0; i <= contiguousMax; i++) {
+    spokenWords.push(verseWordMap[i] || `[${i}]`);
+  }
+
+  const currentWord = verseWordMap[msg.word_index] || "";
+  console.log(
+    `[WORD] ${msg.surah}:${msg.ayah} word ${msg.word_index}/${msg.total_words}` +
+    (currentWord ? ` "${currentWord}"` : "") +
+    ` new=[${msg.matched_indices.join(",")}] accumulated=[${accumulated.join(",")}] contiguous=0..${contiguousMax}` +
+    (_mushafErrorWords.size > 0 ? ` errors=[${Array.from(_mushafErrorWords).join(",")}]` : ""),
+  );
+  if (spokenWords.length > 0) {
+    console.log(
+      `%c[READING] ${spokenWords.join(" ")}`,
+      "color: #7ec8e3; font-size: 14px",
+    );
+  }
+
+  // Highlight using accumulated indices (not just this event's)
+  mushafHighlightWord($mushafPage, msg.surah, msg.ayah, accumulated);
 
   // Mark verse as revealed only when ALL words are matched
-  if (msg.matched_indices.length >= msg.total_words) {
-    state.revealedVerses.add(`${msg.surah}:${msg.ayah}`);
+  if (_mushafMatchedWords.size >= msg.total_words) {
+    state.revealedVerses.add(key);
+    console.log(
+      `%c[VERSE_COMPLETE] ${msg.surah}:${msg.ayah} — all ${msg.total_words} words matched`,
+      "color: #7a9a5a; font-weight: bold",
+    );
+  }
+}
+
+// Handle word correction (misread) in mushaf mode — show red and block
+function handleMushafWordCorrection(msg: WordCorrectionMessage): void {
+  const targetPage = getPageForVerse(msg.surah, msg.ayah);
+  if (!targetPage || targetPage !== state.currentMushafPage) return;
+
+  const key = `${msg.surah}:${msg.ayah}`;
+  _mushafErrorKey = key;
+  const errorIndices = msg.corrections.map((c) => c.word_index);
+  for (const idx of errorIndices) {
+    _mushafErrorWords.add(idx);
+  }
+
+  // Show red highlight on error words
+  mushafHighlightErrors($mushafPage, msg.surah, msg.ayah, errorIndices);
+
+  // Log with word text
+  for (const c of msg.corrections) {
+    let wordText = "";
+    if (state.mushafPages) {
+      const pageData = state.mushafPages[targetPage - 1];
+      for (const line of pageData.lines) {
+        if (line.type === "text" && line.words) {
+          for (const w of line.words) {
+            const [s, a, widx] = w.location.split(":");
+            if (s === String(msg.surah) && a === String(msg.ayah) && parseInt(widx) === c.word_index + 1) {
+              wordText = w.word;
+            }
+          }
+        }
+      }
+    }
+    console.log(
+      `%c[ERROR] ${msg.surah}:${msg.ayah} word ${c.word_index}` +
+      (wordText ? ` "${wordText}"` : "") +
+      ` — ${c.error_type}: expected "${c.expected}", got "${c.got}"`,
+      "color: #ff6b6b; font-weight: bold",
+    );
   }
 }
 
@@ -717,8 +934,6 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
       state.currentMushafPage = 0; // force re-render
       navigateToMushafPage(1);
     }
-  } else if (msg.type === "candidate_list") {
-    handleCandidateList(msg);
   } else if (msg.type === "verse_match") {
     // Hide candidates once a verse is confirmed
     $candidateList.innerHTML = "";
@@ -745,12 +960,32 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
       handleWordProgress(msg);
     }
   } else if (msg.type === "word_correction") {
-    handleWordCorrection(msg);
+    console.log(
+      `%c[CORRECTION] ${msg.surah}:${msg.ayah} errors at words: [${msg.corrections.map((c) => c.word_index).join(",")}]`,
+      "color: #ff6b6b",
+    );
+    if (state.mushafDataReady) {
+      handleMushafWordCorrection(msg);
+    } else {
+      handleWordCorrection(msg);
+    }
   } else if (msg.type === "raw_transcript") {
+    console.log(
+      `%c[HEARD] "${msg.text}" %c(conf: ${(msg.confidence * 100).toFixed(1)}%)`,
+      "color: #e8b339; font-size: 13px",
+      "color: #999",
+    );
     pushDiagnosticEvent("raw_transcript", {
       text: msg.text, confidence: msg.confidence,
     });
     handleRawTranscript(msg);
+  } else if (msg.type === "candidate_list") {
+    if (msg.candidates.length > 0) {
+      console.log(
+        `[CANDIDATES] ${msg.candidates.length} candidates, top: ${msg.candidates[0].surah}:${msg.candidates[0].ayah} (${(msg.candidates[0].score * 100).toFixed(0)}%)`,
+      );
+    }
+    handleCandidateList(msg);
   }
 }
 
@@ -922,62 +1157,69 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Button handlers
-  $btnStart.addEventListener("click", async () => {
-    // Swap start → stop button
-    ($btnStart as HTMLElement).hidden = true;
-    ($btnStop as HTMLElement).hidden = false;
+  // Record toggle (single button: mic ↔ stop)
+  $btnRecToggle.addEventListener("click", async () => {
+    if (!state.isActive) {
+      // --- Start / Resume recording ---
+      $btnRecToggle.classList.remove("mc-btn--rec");
+      $btnRecToggle.classList.add("mc-btn--stop", "recording");
+      $btnRecToggle.title = "Stop";
 
-    state.sessionAudioChunks = [];
-    state.lastModelPrediction = null;
-    state.hasFirstMatch = false;
-    state.groups = [];
-    state.diagnosticEvents = [];
-    state.recentVerseMatches = [];
-    state.revealedVerses = new Set<string>();
-    state.practiceMode = true; // Default practice mode on for mushaf
-    $app.classList.add("practice-mode");
-    $verses.innerHTML = "";
-    $rawTranscript.textContent = "";
-    $rawTranscript.classList.remove("visible");
+      // Keep revealedVerses, currentMushafPage, lastModelPrediction, _wordTrackedVerses
+      // so the user can continue where they left off
+      state.sessionAudioChunks = [];
+      state.hasFirstMatch = false;
+      state.diagnosticEvents = [];
+      state.recentVerseMatches = [];
+      // Reset per-event accumulators but keep verse-level tracking
+      _mushafMatchedWords = new Set<number>();
+      _mushafTrackingKey = "";
+      _mushafErrorWords = new Set<number>();
+      _mushafErrorKey = "";
+      state.practiceMode = true;
+      $app.classList.add("practice-mode");
+      $rawTranscript.textContent = "";
+      $rawTranscript.classList.remove("visible");
+      $postRecording.hidden = true;
 
-    // Show mushaf page if data is loaded
-    if (state.mushafDataReady) {
-      $mushafContainer.hidden = false;
-      $verses.hidden = true;
-      if (state.currentMushafPage < 1) {
-        state.currentMushafPage = 0;
-        await navigateToMushafPage(1);
-      } else {
-        // Re-render current page with practice mode
-        await navigateToMushafPage(state.currentMushafPage);
+      if (state.mushafDataReady) {
+        $mushafContainer.hidden = false;
+        $verses.hidden = true;
+        // Re-render current page to apply practice mode with preserved reveals
+        const pg = state.currentMushafPage >= 1 ? state.currentMushafPage : 1;
+        state.currentMushafPage = 0; // force re-render
+        await navigateToMushafPage(pg);
       }
+
+      state.worker?.postMessage({ type: "reset" });
+      await startAudio();
+    } else {
+      // --- Stop recording (pause — keep state) ---
+      stopAudio();
+      $btnRecToggle.classList.remove("mc-btn--stop", "recording");
+      $btnRecToggle.classList.add("mc-btn--rec");
+      $btnRecToggle.title = "Start recitation";
+
+      // Keep practice mode and mushaf visible so user sees their progress
+      $candidateList.innerHTML = "";
+      $candidateList.classList.remove("visible");
     }
-
-    state.worker?.postMessage({ type: "reset" });
-    await startAudio();
-  });
-
-  $btnStop.addEventListener("click", () => {
-    stopAudio();
-    // Swap stop → start button
-    ($btnStop as HTMLElement).hidden = true;
-    ($btnStart as HTMLElement).hidden = false;
-    $postRecording.hidden = false;
-    state.practiceMode = false;
-    state.narrowingMode = false;
-    $app.classList.remove("practice-mode");
-    $btnNarrowing.classList.remove("active");
-    $candidateList.innerHTML = "";
-    $candidateList.classList.remove("visible");
   });
 
   $btnRestart.addEventListener("click", () => {
+    // Full reset — clear everything
     state.sessionAudioChunks = [];
     state.lastModelPrediction = null;
     state.hasFirstMatch = false;
     state.groups = [];
     state.revealedVerses = new Set<string>();
+    // Reset mushaf tracking state
+    _wordTrackedVerses.clear();
+    _priorRevealDoneForPage = 0;
+    _mushafMatchedWords = new Set<number>();
+    _mushafTrackingKey = "";
+    _mushafErrorWords = new Set<number>();
+    _mushafErrorKey = "";
     $verses.innerHTML = "";
     $rawTranscript.textContent = "";
     $rawTranscript.classList.remove("visible");
@@ -988,6 +1230,11 @@ document.addEventListener("DOMContentLoaded", () => {
     $btnNarrowing.classList.remove("active");
     $candidateList.innerHTML = "";
     $candidateList.classList.remove("visible");
+
+    // Reset toggle button to mic state
+    $btnRecToggle.classList.remove("mc-btn--stop", "recording");
+    $btnRecToggle.classList.add("mc-btn--rec");
+    $btnRecToggle.title = "Start recitation";
 
     // Show mushaf page 1
     if (state.mushafDataReady) {

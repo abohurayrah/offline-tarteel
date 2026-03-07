@@ -214,6 +214,36 @@ export function highlightWord(
   }
 }
 
+// ── Error highlighting (misread words) ──
+export function highlightErrors(
+  container: HTMLElement,
+  surah: number,
+  ayah: number,
+  errorIndices: number[],
+): void {
+  const words = Array.from(
+    container.querySelectorAll<HTMLElement>(
+      `.mp-word[data-surah="${surah}"][data-ayah="${ayah}"]`,
+    ),
+  );
+  if (!words.length) return;
+
+  const errors = new Set(errorIndices);
+  for (let i = 0; i < words.length; i++) {
+    if (errors.has(i)) {
+      words[i].classList.add("mp-word--error");
+    } else {
+      words[i].classList.remove("mp-word--error");
+    }
+  }
+}
+
+export function clearErrors(container: HTMLElement): void {
+  for (const w of container.querySelectorAll<HTMLElement>(".mp-word--error")) {
+    w.classList.remove("mp-word--error");
+  }
+}
+
 // ── Reveal all (toggle practice mode off) ──
 export function revealAll(container: HTMLElement): void {
   for (const w of container.querySelectorAll<HTMLElement>(".mp-word--hidden")) {
