@@ -92,6 +92,7 @@ const state = {
   currentMushafPage: 1,
   revealedVerses: new Set<string>(),
   mushafDataReady: false,
+  lastVerseTransitionTime: 0,
 };
 
 // ---------------------------------------------------------------------------
@@ -210,6 +211,13 @@ let _priorRevealDoneForPage = 0;
 async function handleMushafVerseMatch(msg: VerseMatchMessage): Promise<void> {
   const prevPrediction = state.lastModelPrediction;
   state.lastModelPrediction = { surah: msg.surah, ayah: msg.ayah, confidence: msg.confidence };
+
+  // Clear error state from previous verse to prevent stale red highlighting
+  _mushafErrorWords.clear();
+  _mushafErrorKey = "";
+
+  // Track verse transition time — suppress gap detection for 2s after transitions
+  state.lastVerseTransitionTime = Date.now();
 
   console.log(
     `%c[VERSE_MATCH] ${msg.surah}:${msg.ayah} (conf: ${(msg.confidence * 100).toFixed(1)}%)` +
@@ -337,8 +345,10 @@ function handleMushafWordProgress(msg: WordProgressMessage): void {
 
   // Detect skipped words (gaps) — these are likely misreads
   // e.g., accumulated=[0,1,2,5,6] with contiguousMax=2 → words 3,4 were skipped
+  // Suppress during verse transitions (2s grace) to avoid false positives from stale audio
   const beyondContiguous = accumulated.filter((i) => i > contiguousMax + 1);
-  if (beyondContiguous.length > 0 && contiguousMax >= 0) {
+  const isRecentTransition = Date.now() - state.lastVerseTransitionTime < 2000;
+  if (beyondContiguous.length >= 2 && contiguousMax >= 1 && !isRecentTransition) {
     const firstBeyond = beyondContiguous[0];
     const skippedIndices: number[] = [];
     for (let i = contiguousMax + 1; i < firstBeyond; i++) {

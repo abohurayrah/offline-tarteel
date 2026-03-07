@@ -117,6 +117,7 @@ export class RecitationTracker {
 
   // Verse transition anti-bounce state
   private transitionCooldown = 0;       // cycles to suppress backward jumps after verse advance
+  private transitionGraceCycles = 0;    // grace cycles after entering tracking (skip stale audio)
   private lastConfirmedAyah = -1;       // highest ayah number confirmed in current surah
   private lastConfirmedSurah = -1;
 
@@ -197,6 +198,12 @@ export class RecitationTracker {
     // Decrement transition cooldown
     if (this.transitionCooldown > 0) {
       this.transitionCooldown--;
+    }
+
+    // Grace period after verse transition — skip inference to let stale audio flush
+    if (this.transitionGraceCycles > 0) {
+      this.transitionGraceCycles--;
+      return messages;
     }
 
     // Transcribe and normalize Arabic
@@ -358,14 +365,11 @@ export class RecitationTracker {
           this.transitionCooldown = 3;
         }
 
-        // Buffer trim on verse advance — keep ~1.0s
-        // Balance: enough audio for next verse tracking, but trim stale audio
-        // from completed verse to prevent backward-matching contamination
-        const keepSamples = Math.min(
-          this.fullAudio.length,
-          Math.floor(16000 * 1.0),
-        );
-        this.fullAudio = this.fullAudio.slice(-keepSamples);
+        // Clear audio buffer on verse advance to prevent stale audio from
+        // the completed verse contaminating next-verse tracking.
+        // User typically pauses briefly between verses, so next inference
+        // will capture fresh audio from the new verse.
+        this.fullAudio = new Float32Array(0);
         this.accumulatedText = "";
         this.accumulatedCycles = 0;
       }
@@ -692,6 +696,9 @@ export class RecitationTracker {
     this.staleCycles = 0;
     this.accumulatedText = "";
     this.accumulatedCycles = 0;
+    // Grace period: skip 2 tracking cycles (~1s) to let stale audio from
+    // the completed verse flush out before starting word alignment
+    this.transitionGraceCycles = 2;
 
     // Initialize confirmed verse tracking on first entry
     if (this.lastConfirmedSurah < 0) {
