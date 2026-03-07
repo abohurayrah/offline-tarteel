@@ -321,6 +321,17 @@ async function handleVerseMatch(msg: VerseMatchMessage): Promise<void> {
     state.hasFirstMatch = true;
     $listeningStatus.hidden = true;
     $indicator.classList.add("has-verses");
+
+    // Break apart the mushaf frame, then hide it
+    if (!$readyState.hidden) {
+      $readyState.classList.add("ready-breaking");
+      setTimeout(() => {
+        $readyState.hidden = true;
+        $readyState.classList.remove("ready-breaking", "ready-listening");
+        const mc = $readyState.querySelector<HTMLElement>(".mushaf-content");
+        if (mc) mc.hidden = false;
+      }, 700);
+    }
   }
 
   const lastGroup = state.groups[state.groups.length - 1];
@@ -693,7 +704,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Button handlers
   $btnStart.addEventListener("click", async () => {
-    $readyState.hidden = true;
+    // Hide button + subtitle, keep mushaf frame visible
+    const mushafContent = $readyState.querySelector<HTMLElement>(".mushaf-content");
+    if (mushafContent) mushafContent.hidden = true;
+    $readyState.classList.add("ready-listening");
+
     $recordingState.hidden = false;
     $btnPractice.hidden = false;
     state.sessionAudioChunks = [];
@@ -705,17 +720,19 @@ document.addEventListener("DOMContentLoaded", () => {
     $verses.innerHTML = "";
     $rawTranscript.textContent = "";
     $rawTranscript.classList.remove("visible");
-    // Reset tracker in worker
     state.worker?.postMessage({ type: "reset" });
     await startAudio();
   });
 
   $btnStop.addEventListener("click", () => {
     stopAudio();
+    $readyState.hidden = true;
+    $readyState.classList.remove("ready-breaking", "ready-listening");
+    const mc = $readyState.querySelector<HTMLElement>(".mushaf-content");
+    if (mc) mc.hidden = false;
     $recordingState.hidden = true;
     $btnPractice.hidden = true;
     $postRecording.hidden = false;
-    // Remove practice mode when stopping
     state.practiceMode = false;
     $app.classList.remove("practice-mode");
   });
@@ -729,9 +746,15 @@ document.addEventListener("DOMContentLoaded", () => {
     $rawTranscript.textContent = "";
     $rawTranscript.classList.remove("visible");
     $postRecording.hidden = true;
-    $readyState.hidden = false;
     state.practiceMode = false;
     $app.classList.remove("practice-mode");
+
+    // Re-trigger SVG draw animations by cloning the frame
+    const oldFrame = $readyState.querySelector(".mushaf-frame")!;
+    const newFrame = oldFrame.cloneNode(true) as HTMLElement;
+    oldFrame.parentNode!.replaceChild(newFrame, oldFrame);
+
+    $readyState.hidden = false;
   });
 
   $btnReport.addEventListener("click", () => {

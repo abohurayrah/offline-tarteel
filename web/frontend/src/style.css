@@ -9,14 +9,16 @@
 
 /* ── Base ── */
 :root {
-  --bg: #faf8f3;
-  --bg-warm: #f5f0e8;
-  --text: #2c2416;
-  --text-light: #8a7e6b;
-  --text-muted: #b8ad9a;
-  --text-faint: #d5cfc4;
-  --accent-warm: rgba(180, 140, 60, 0.08);
-  --accent-warm-strong: rgba(180, 140, 60, 0.15);
+  --bg: #FAFAFA;
+  --bg-warm: #F4F2EC;
+  --text: #2C2A26;
+  --text-light: #59554D;
+  --text-muted: #9E9789;
+  --text-faint: #D1CFC7;
+  --accent-gold: #C2A05B;
+  --accent-gold-glow: rgba(194, 160, 91, 0.4);
+  --accent-warm: rgba(194, 160, 91, 0.08);
+  --accent-warm-strong: rgba(194, 160, 91, 0.15);
   --font-arabic: "Amiri", serif;
   --font-quran: "Amiri Quran", "Amiri", serif;
   --font-system: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -75,7 +77,8 @@ body {
 .loading-progress-fill {
   width: 0%;
   height: 100%;
-  background: #b8986a;
+  background: var(--accent-gold);
+  box-shadow: 0 0 12px var(--accent-gold-glow);
   border-radius: 2px;
   transition: width 0.3s ease;
 }
@@ -112,6 +115,7 @@ body {
     opacity: 0;
     transform: translateY(8px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -131,15 +135,13 @@ body {
   padding: 2.5rem 2rem 2rem;
   animation: group-enter 0.6s ease-out;
 
-  /* Multi-layer Mushaf page border */
-  border: 2px solid #c9a961;
-  border-radius: 2px;
+  /* High-end paper look */
+  border: 1px solid rgba(194, 160, 91, 0.2);
+  border-radius: 8px;
   background: var(--bg);
   box-shadow:
-    inset 0 0 0 4px var(--bg),
-    inset 0 0 0 5px #d4c4a8,
-    0 4px 24px rgba(139, 115, 85, 0.12),
-    0 1px 4px rgba(139, 115, 85, 0.08);
+    0 4px 20px rgba(0, 0, 0, 0.03),
+    0 1px 4px rgba(0, 0, 0, 0.02);
 }
 
 /* Corner ornaments */
@@ -147,7 +149,7 @@ body {
 .verse-group::after {
   content: "\2726";
   position: absolute;
-  color: #c9a961;
+  color: rgba(194, 160, 91, 0.5);
   font-size: 0.7rem;
   line-height: 1;
   pointer-events: none;
@@ -172,6 +174,7 @@ body {
     opacity: 0;
     transform: translateY(12px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -183,6 +186,7 @@ body {
     opacity: 1;
     transform: translateY(0);
   }
+
   to {
     opacity: 0;
     transform: translateY(-12px);
@@ -199,13 +203,12 @@ body {
   padding: 0.75rem 1.5rem;
   margin-bottom: 1.5rem;
   position: relative;
-  border: 1.5px solid #c9a961;
+  border: 1px solid rgba(226, 195, 126, 0.2);
   border-radius: 24px;
-  background: linear-gradient(
-    180deg,
-    rgba(201, 169, 97, 0.07) 0%,
-    rgba(201, 169, 97, 0.02) 100%
-  );
+  background: linear-gradient(180deg,
+      rgba(226, 195, 126, 0.1) 0%,
+      rgba(226, 195, 126, 0.02) 100%);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 /* Decorative double-line above and below */
@@ -216,24 +219,27 @@ body {
   left: 10%;
   right: 10%;
   height: 1px;
-  background: linear-gradient(
-    to right,
-    transparent 0%,
-    #d4c4a8 15%,
-    #c9a961 50%,
-    #d4c4a8 85%,
-    transparent 100%
-  );
+  background: linear-gradient(to right,
+      transparent 0%,
+      rgba(194, 160, 91, 0.2) 15%,
+      rgba(194, 160, 91, 0.6) 50%,
+      rgba(194, 160, 91, 0.2) 85%,
+      transparent 100%);
 }
 
-.surah-header::before { top: -5px; }
-.surah-header::after { bottom: -5px; }
+.surah-header::before {
+  top: -5px;
+}
+
+.surah-header::after {
+  bottom: -5px;
+}
 
 /* Ornamental ﴾ ﴿ parentheses */
 .surah-header-ornament {
   font-family: var(--font-quran);
   font-size: 1.8rem;
-  color: #c9a961;
+  color: rgba(194, 160, 91, 0.6);
   line-height: 1;
   flex-shrink: 0;
 }
@@ -277,14 +283,12 @@ body {
   width: 120px;
   height: 1px;
   margin: 0.5rem auto 0.75rem;
-  background: linear-gradient(
-    to right,
-    transparent 0%,
-    #d4c4a8 20%,
-    #c9a961 50%,
-    #d4c4a8 80%,
-    transparent 100%
-  );
+  background: linear-gradient(to right,
+      transparent 0%,
+      rgba(194, 160, 91, 0.2) 20%,
+      rgba(194, 160, 91, 0.6) 50%,
+      rgba(194, 160, 91, 0.2) 80%,
+      transparent 100%);
   position: relative;
 }
 
@@ -295,7 +299,7 @@ body {
   left: 50%;
   transform: translate(-50%, -50%);
   font-size: 0.55rem;
-  color: #c9a961;
+  color: rgba(194, 160, 91, 0.7);
   background: var(--bg);
   padding: 0 0.5rem;
   line-height: 1;
@@ -329,7 +333,7 @@ body {
 /* Active verse — currently being recited */
 .verse--active {
   color: var(--text);
-  background: var(--accent-warm-strong);
+  background: var(--bg-warm);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
@@ -363,22 +367,24 @@ body {
 
 /* Active word glow — the "just reached" word gets a warm highlight */
 .verse--active .word--current {
-  text-shadow: 0 0 16px rgba(184, 152, 106, 0.6), 0 0 6px rgba(184, 152, 106, 0.35);
-  color: #4a3b20;
+  text-shadow: 0 0 16px rgba(194, 160, 91, 0.4);
+  color: #8C6A30;
+  transform: scale(1.03);
 }
 
 /* In practice mode, make the current word pop more with a subtle background */
 .practice-mode .verse--active .word--current {
-  text-shadow: 0 0 20px rgba(184, 152, 106, 0.7), 0 0 8px rgba(184, 152, 106, 0.4);
-  background: var(--accent-warm-strong);
-  border-radius: 3px;
+  text-shadow: 0 0 16px rgba(194, 160, 91, 0.4);
+  background: rgba(194, 160, 91, 0.1);
+  border-radius: 4px;
   padding: 0 0.15em;
   margin: 0 -0.15em;
+  transform: scale(1.05);
 }
 
 .verse--active .word--error {
-  color: #c0564b;
-  text-decoration: underline wavy #c0564b;
+  color: #ff6b6b;
+  text-decoration: underline wavy #ff6b6b;
   text-underline-offset: 0.3em;
 }
 
@@ -430,11 +436,13 @@ body {
     opacity: 0.15;
     transform: scale(0.95);
   }
+
   60% {
     filter: blur(0);
     opacity: 1;
     transform: scale(1.04);
   }
+
   100% {
     filter: blur(0);
     opacity: 1;
@@ -450,8 +458,8 @@ body {
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  border: 1px solid rgba(200, 190, 170, 0.3);
-  background: rgba(245, 240, 232, 0.8);
+  border: 1px solid rgba(194, 160, 91, 0.4);
+  background: var(--bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   color: var(--text-muted);
@@ -467,8 +475,8 @@ body {
 
 .practice-toggle:hover {
   color: var(--text-light);
-  border-color: rgba(200, 190, 170, 0.5);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  border-color: rgba(194, 160, 91, 0.8);
+  box-shadow: 0 4px 12px rgba(194, 160, 91, 0.15);
 }
 
 .practice-toggle:active {
@@ -481,10 +489,10 @@ body {
 }
 
 .practice-mode .practice-toggle {
-  background: rgba(184, 152, 106, 0.15);
-  border-color: rgba(184, 152, 106, 0.4);
-  color: #a07830;
-  box-shadow: 0 0 12px rgba(184, 152, 106, 0.2);
+  background: rgba(194, 160, 91, 0.15);
+  border-color: rgba(194, 160, 91, 0.6);
+  color: var(--accent-gold);
+  box-shadow: 0 4px 16px rgba(194, 160, 91, 0.25);
 }
 
 .practice-mode .practice-icon--off {
@@ -499,7 +507,7 @@ body {
 .verse-marker {
   font-family: var(--font-quran);
   font-size: 1.3rem;
-  color: #c5a55a;
+  color: rgba(226, 195, 126, 0.7);
   user-select: none;
   transition: color 0.35s ease, opacity 0.35s ease;
   padding: 0 0.25rem;
@@ -508,16 +516,16 @@ body {
 }
 
 .verse--active .verse-marker {
-  color: #b8986a;
+  color: var(--accent-gold);
 }
 
 .verse--upcoming .verse-marker {
-  color: #c5a55a;
+  color: rgba(226, 195, 126, 0.7);
   opacity: 0.7;
 }
 
 .verse--recited .verse-marker {
-  color: #c5a55a;
+  color: rgba(226, 195, 126, 0.7);
   opacity: 0.45;
 }
 
@@ -566,8 +574,8 @@ body {
 }
 
 #listening-indicator.active .pulse-dot {
-  background: #b8986a;
-  box-shadow: 0 0 8px rgba(184, 152, 106, 0.4);
+  background: var(--accent-gold);
+  box-shadow: 0 0 16px rgba(194, 160, 91, 0.5);
 }
 
 .pulse-ring {
@@ -583,7 +591,7 @@ body {
 }
 
 #listening-indicator.active .pulse-ring {
-  border-color: rgba(184, 152, 106, 0.25);
+  border-color: rgba(194, 160, 91, 0.3);
   animation: pulse-breathe 3s ease-in-out infinite;
 }
 
@@ -600,6 +608,7 @@ body {
     transform: scale(0.5);
     opacity: 0.6;
   }
+
   100% {
     transform: scale(2);
     opacity: 0;
@@ -670,11 +679,11 @@ body {
   white-space: nowrap;
   padding: 0.4rem 0.85rem;
   border-radius: 999px;
-  background: rgba(245, 240, 232, 0.65);
+  background: rgba(250, 250, 250, 0.85);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(200, 190, 170, 0.25);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(194, 160, 91, 0.2);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
   z-index: 20;
 }
 
@@ -708,22 +717,205 @@ body {
 }
 
 @keyframes status-pulse {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 1; }
+
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
 /* ── Recording controls ── */
-#ready-state, #recording-state, #post-recording {
+#recording-state,
+#post-recording {
   text-align: center;
   padding: 2rem 1rem;
   animation: fade-in 0.4s ease-out;
 }
 
+#ready-state {
+  text-align: center;
+  padding: 4rem 1rem;
+  animation: fade-in 0.8s ease-out;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 50vh;
+}
+
+.mushaf-layout {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  aspect-ratio: 400 / 280;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.mushaf-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  color: var(--accent-gold);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.mushaf-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.mushaf-start-btn {
+  background: transparent;
+  border: 1px solid rgba(194, 160, 91, 0.3);
+  border-radius: 8px;
+  font-family: var(--font-system);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent-gold);
+  cursor: pointer;
+  padding: 0.85rem 2.5rem;
+  transition: all 0.3s ease;
+}
+
+.mushaf-start-btn:hover {
+  background: rgba(194, 160, 91, 0.06);
+  border-color: rgba(194, 160, 91, 0.5);
+  box-shadow: 0 0 20px rgba(194, 160, 91, 0.1);
+}
+
+.mushaf-start-btn:active {
+  transform: scale(0.96);
+}
+
 .ready-prompt {
   font-family: var(--font-system);
-  font-size: 1.1rem;
+  font-size: 0.8rem;
   color: var(--text-muted);
-  margin-bottom: 1.5rem;
+  letter-spacing: 0.04em;
+  margin: 0;
+}
+
+/* SVG draw-on animations */
+.mushaf-frame svg rect,
+.mushaf-frame svg path,
+.mushaf-frame svg line {
+  transition: transform 0.7s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.5s ease;
+}
+
+.mushaf-frame .line-spine {
+  stroke-dasharray: 240;
+  stroke-dashoffset: 240;
+  animation: draw-spine 1.6s cubic-bezier(0.23, 1, 0.32, 1) forwards;
+}
+
+.mushaf-frame .line-page {
+  stroke-dasharray: 820;
+  stroke-dashoffset: 820;
+  animation: draw-page 2s cubic-bezier(0.23, 1, 0.32, 1) forwards 0.3s;
+}
+
+.mushaf-frame .line-acc {
+  stroke-dasharray: 720;
+  stroke-dashoffset: 720;
+  animation: draw-page 2s cubic-bezier(0.23, 1, 0.32, 1) forwards 0.6s;
+}
+
+.mushaf-frame .corner-mark {
+  stroke-dasharray: 20;
+  stroke-dashoffset: 20;
+  animation: draw-corner 0.8s ease forwards 1s;
+}
+
+.mushaf-frame .center-diamond {
+  opacity: 0;
+  animation: fade-in 0.8s ease forwards 1.2s;
+}
+
+.mushaf-frame .text-line {
+  stroke-dasharray: 110;
+  stroke-dashoffset: 110;
+  animation: draw-text-line 1s ease forwards;
+}
+
+.mushaf-frame .text-line:nth-child(n+9) { animation-delay: 1.3s; }
+.mushaf-frame .text-line:nth-child(n+1):nth-child(-n+8) { animation-delay: 1.2s; }
+
+@keyframes draw-spine {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes draw-page {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes draw-corner {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes draw-text-line {
+  to { stroke-dashoffset: 0; }
+}
+
+/* Break-apart animation when user taps Start */
+.ready-breaking .mushaf-content {
+  opacity: 0;
+  transform: scale(0.95);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+
+.ready-breaking .line-spine {
+  transform: scaleY(0);
+  transform-origin: center;
+  opacity: 0;
+}
+
+.ready-breaking .line-page-l,
+.ready-breaking .line-acc-l,
+.ready-breaking .corner-tl,
+.ready-breaking .corner-bl {
+  transform: translateX(-60px);
+  opacity: 0;
+}
+
+.ready-breaking .line-page-r,
+.ready-breaking .line-acc-r,
+.ready-breaking .corner-tr,
+.ready-breaking .corner-br {
+  transform: translateX(60px);
+  opacity: 0;
+}
+
+.ready-breaking .center-diamond {
+  transform: scale(0);
+  opacity: 0;
+}
+
+.ready-breaking .text-line {
+  opacity: 0;
+}
+
+/* Listening state — mushaf frame stays visible, gentle pulse */
+.ready-listening .mushaf-frame {
+  animation: frame-breathe 3s ease-in-out infinite;
+}
+
+@keyframes frame-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 .rec-btn {
@@ -741,12 +933,6 @@ body {
 
 .rec-btn:active {
   transform: scale(0.95);
-}
-
-.rec-btn--start {
-  background: #b8986a;
-  color: #fff;
-  box-shadow: 0 2px 12px rgba(184, 152, 106, 0.3);
 }
 
 .rec-btn--stop {
@@ -805,18 +991,18 @@ body {
   text-decoration: none;
   padding: 0.35rem 0.7rem;
   border-radius: 999px;
-  background: rgba(245, 240, 232, 0.65);
+  background: rgba(250, 250, 250, 0.85);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(200, 190, 170, 0.25);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(194, 160, 91, 0.2);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
   z-index: 20;
   transition: color 0.2s ease, border-color 0.2s ease;
 }
 
 #github-link:hover {
   color: var(--text-light);
-  border-color: rgba(200, 190, 170, 0.45);
+  border-color: rgba(194, 160, 91, 0.4);
 }
 
 #github-link svg {
@@ -836,8 +1022,8 @@ body {
 }
 
 #report-dialog::backdrop {
-  background: rgba(44, 36, 22, 0.4);
-  backdrop-filter: blur(4px);
+  background: rgba(244, 242, 236, 0.8);
+  backdrop-filter: blur(6px);
 }
 
 .dialog-content {
@@ -874,7 +1060,7 @@ body {
 .verse-selectors select {
   flex: 1;
   padding: 0.5rem;
-  border: 1px solid rgba(200, 190, 170, 0.4);
+  border: 1px solid rgba(194, 160, 91, 0.3);
   border-radius: 6px;
   background: var(--bg-warm);
   font-family: var(--font-system);
@@ -892,7 +1078,7 @@ body {
 #report-notes {
   width: 100%;
   padding: 0.5rem;
-  border: 1px solid rgba(200, 190, 170, 0.4);
+  border: 1px solid rgba(194, 160, 91, 0.3);
   border-radius: 6px;
   background: var(--bg-warm);
   font-family: var(--font-system);
@@ -949,9 +1135,8 @@ body {
   .verse-group {
     padding: 1.75rem 1.25rem 1.5rem;
     box-shadow:
-      inset 0 0 0 3px var(--bg),
-      inset 0 0 0 4px #d4c4a8,
-      0 2px 12px rgba(139, 115, 85, 0.1);
+      0 2px 12px rgba(0, 0, 0, 0.03),
+      0 1px 4px rgba(0, 0, 0, 0.02);
   }
 
   .verse-body {
