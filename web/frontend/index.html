@@ -1,117 +1,171 @@
 <!doctype html>
 <html lang="en" dir="ltr">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tarteel</title>
-    <meta name="theme-color" content="#2c2416">
-  </head>
-  <body>
-    <div id="app">
-      <div id="loading-status">
-        <p class="loading-status-main">Preparing model...</p>
-        <div class="loading-progress-track">
-          <div class="loading-progress-fill" id="loading-progress"></div>
-        </div>
-        <p class="loading-status-sub" id="loading-detail">Downloading</p>
-      </div>
-      <div id="listening-status" hidden>
-        <p class="listening-status-main">Listening...</p>
-        <p class="listening-status-sub">Begin your recitation</p>
-      </div>
-      <div id="ready-state" hidden>
-        <p class="ready-prompt">Tap to begin recitation</p>
-        <button id="btn-start" class="rec-btn rec-btn--start">Start</button>
-      </div>
-      <div id="recording-state" hidden>
-        <button id="btn-stop" class="rec-btn rec-btn--stop">Stop</button>
-      </div>
-      <button id="btn-practice" class="practice-toggle" title="Practice Mode" hidden>
-        <svg class="practice-icon practice-icon--off" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-          <circle cx="12" cy="12" r="3"/>
-        </svg>
-        <svg class="practice-icon practice-icon--on" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
-          <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
-          <line x1="1" y1="1" x2="23" y2="23"/>
-        </svg>
-      </button>
-      <div id="post-recording" hidden>
-        <div class="post-actions">
-          <button id="btn-report" class="action-btn action-btn--report">Report Error</button>
-          <button id="btn-restart" class="action-btn action-btn--restart">Start Again</button>
-        </div>
-      </div>
-      <div id="verses"></div>
-      <div id="raw-transcript"></div>
-      <div id="listening-indicator">
-        <div class="pulse-ring"></div>
-        <div class="pulse-ring"></div>
-        <div class="pulse-ring"></div>
-        <div class="pulse-dot"></div>
-      </div>
-      <div id="permission-prompt" hidden>
-        <p>Microphone access is needed to listen to your recitation.</p>
-      </div>
-      <div id="offline-badge">
-        <span id="model-status">Loading model...</span>
-        <span class="badge-sep">&middot;</span>
-        on-device recognition
-      </div>
 
-      <a id="github-link" href="https://github.com/yazinsai/offline-tarteel" target="_blank" rel="noopener">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.475 2 2 6.475 2 12a9.994 9.994 0 0 0 6.838 9.488c.5.087.687-.213.687-.476c0-.237-.013-1.024-.013-1.862c-2.512.463-3.162-.612-3.362-1.175c-.113-.288-.6-1.175-1.025-1.413c-.35-.187-.85-.65-.013-.662c.788-.013 1.35.725 1.538 1.025c.9 1.512 2.338 1.087 2.912.825c.088-.65.35-1.087.638-1.337c-2.225-.25-4.55-1.113-4.55-4.938c0-1.088.387-1.987 1.025-2.688c-.1-.25-.45-1.275.1-2.65c0 0 .837-.262 2.75 1.026a9.28 9.28 0 0 1 2.5-.338c.85 0 1.7.112 2.5.337c1.912-1.3 2.75-1.024 2.75-1.024c.55 1.375.2 2.4.1 2.65c.637.7 1.025 1.587 1.025 2.687c0 3.838-2.337 4.688-4.562 4.938c.362.312.675.912.675 1.85c0 1.337-.013 2.412-.013 2.75c0 .262.188.574.688.474A10.016 10.016 0 0 0 22 12c0-5.525-4.475-10-10-10Z"/></svg>
-        Open source
-      </a>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tarteel</title>
+  <meta name="theme-color" content="#FAFAFA">
+</head>
 
-      <dialog id="report-dialog">
-        <div class="dialog-content">
-          <h2 class="dialog-title">Report Error</h2>
-
-          <div class="dialog-section">
-            <label class="dialog-label">Your recording</label>
-            <audio id="report-audio" controls></audio>
-          </div>
-
-          <div class="dialog-section">
-            <label class="dialog-label">What were you reciting?</label>
-            <div class="verse-selectors">
-              <select id="report-surah"></select>
-              <select id="report-ayah"></select>
-            </div>
-          </div>
-
-          <div class="dialog-section">
-            <label class="dialog-label">Model predicted</label>
-            <p id="report-prediction" class="prediction-text"></p>
-          </div>
-
-          <div class="dialog-section">
-            <label class="dialog-label">Notes (optional)</label>
-            <textarea id="report-notes" rows="3" placeholder="Describe the issue..."></textarea>
-          </div>
-
-          <div class="dialog-actions">
-            <button id="btn-submit-report" class="action-btn action-btn--report">Submit</button>
-            <button id="btn-cancel-report" class="action-btn action-btn--restart">Cancel</button>
-          </div>
-
-          <p id="report-status" class="report-status" hidden></p>
-        </div>
-      </dialog>
+<body>
+  <div id="app">
+    <div id="loading-status">
+      <p class="loading-status-main">Preparing model...</p>
+      <div class="loading-progress-track">
+        <div class="loading-progress-fill" id="loading-progress"></div>
+      </div>
+      <p class="loading-status-sub" id="loading-detail">Downloading</p>
     </div>
-    <script>
-      // Unregister old service worker that cached stale assets
-      if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function (regs) {
-          for (var r of regs) r.unregister();
-        });
-        caches.keys().then(function (keys) {
-          for (var k of keys) caches.delete(k);
-        });
-      }
-    </script>
-    <script type="module" src="/src/main.ts"></script>
-  </body>
+    <div id="listening-status" hidden>
+      <p class="listening-status-main">Listening...</p>
+      <p class="listening-status-sub">Begin your recitation</p>
+    </div>
+    <div id="ready-state" hidden>
+      <div class="mushaf-layout">
+        <div class="mushaf-frame">
+          <svg viewBox="0 0 400 280" fill="none" stroke="currentColor" stroke-width="1">
+            <!-- Left page -->
+            <rect x="30" y="20" width="168" height="240" rx="2" stroke-opacity="0.25" class="line-page line-page-l" />
+            <!-- Right page -->
+            <rect x="202" y="20" width="168" height="240" rx="2" stroke-opacity="0.25" class="line-page line-page-r" />
+            <!-- Center spine -->
+            <line x1="200" y1="20" x2="200" y2="260" stroke-opacity="0.4" stroke-width="1.5" class="line-spine" />
+            <!-- Left inner border -->
+            <rect x="42" y="32" width="144" height="216" rx="1" stroke-opacity="0.12" class="line-acc line-acc-l" />
+            <!-- Right inner border -->
+            <rect x="214" y="32" width="144" height="216" rx="1" stroke-opacity="0.12" class="line-acc line-acc-r" />
+            <!-- Corner ornaments — top-left -->
+            <path d="M 46 36 L 46 46 M 46 36 L 56 36" stroke-opacity="0.35" class="corner-mark corner-tl" />
+            <!-- Corner ornaments — top-right -->
+            <path d="M 354 36 L 354 46 M 354 36 L 344 36" stroke-opacity="0.35" class="corner-mark corner-tr" />
+            <!-- Corner ornaments — bottom-left -->
+            <path d="M 46 244 L 46 234 M 46 244 L 56 244" stroke-opacity="0.35" class="corner-mark corner-bl" />
+            <!-- Corner ornaments — bottom-right -->
+            <path d="M 354 244 L 354 234 M 354 244 L 344 244" stroke-opacity="0.35" class="corner-mark corner-br" />
+            <!-- Decorative center diamond -->
+            <path d="M 200 130 L 206 140 L 200 150 L 194 140 Z" stroke-opacity="0.3" fill="currentColor" fill-opacity="0.06" class="acc-dot center-diamond" />
+            <!-- Tiny text lines on left page -->
+            <line x1="60" y1="60" x2="170" y2="60" stroke-opacity="0.06" class="text-line" />
+            <line x1="60" y1="76" x2="170" y2="76" stroke-opacity="0.06" class="text-line" />
+            <line x1="60" y1="92" x2="170" y2="92" stroke-opacity="0.06" class="text-line" />
+            <line x1="60" y1="108" x2="170" y2="108" stroke-opacity="0.06" class="text-line" />
+            <line x1="60" y1="124" x2="170" y2="124" stroke-opacity="0.06" class="text-line" />
+            <line x1="60" y1="140" x2="170" y2="140" stroke-opacity="0.06" class="text-line" />
+            <line x1="60" y1="156" x2="170" y2="156" stroke-opacity="0.06" class="text-line" />
+            <line x1="60" y1="172" x2="170" y2="172" stroke-opacity="0.06" class="text-line" />
+            <!-- Tiny text lines on right page -->
+            <line x1="230" y1="60" x2="340" y2="60" stroke-opacity="0.06" class="text-line" />
+            <line x1="230" y1="76" x2="340" y2="76" stroke-opacity="0.06" class="text-line" />
+            <line x1="230" y1="92" x2="340" y2="92" stroke-opacity="0.06" class="text-line" />
+            <line x1="230" y1="108" x2="340" y2="108" stroke-opacity="0.06" class="text-line" />
+            <line x1="230" y1="124" x2="340" y2="124" stroke-opacity="0.06" class="text-line" />
+            <line x1="230" y1="140" x2="340" y2="140" stroke-opacity="0.06" class="text-line" />
+            <line x1="230" y1="156" x2="340" y2="156" stroke-opacity="0.06" class="text-line" />
+            <line x1="230" y1="172" x2="340" y2="172" stroke-opacity="0.06" class="text-line" />
+          </svg>
+        </div>
+        <div class="mushaf-content">
+          <button id="btn-start" class="mushaf-start-btn">Begin</button>
+          <p class="ready-prompt">tap to start recitation</p>
+        </div>
+      </div>
+    </div>
+    <div id="recording-state" hidden>
+      <button id="btn-stop" class="rec-btn rec-btn--stop">Stop</button>
+    </div>
+    <button id="btn-practice" class="practice-toggle" title="Practice Mode" hidden>
+      <svg class="practice-icon practice-icon--off" width="20" height="20" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+      <svg class="practice-icon practice-icon--on" width="20" height="20" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+        <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+        <line x1="1" y1="1" x2="23" y2="23" />
+      </svg>
+    </button>
+    <div id="post-recording" hidden>
+      <div class="post-actions">
+        <button id="btn-report" class="action-btn action-btn--report">Report Error</button>
+        <button id="btn-restart" class="action-btn action-btn--restart">Start Again</button>
+      </div>
+    </div>
+    <div id="verses"></div>
+    <div id="raw-transcript"></div>
+    <div id="listening-indicator">
+      <div class="pulse-ring"></div>
+      <div class="pulse-ring"></div>
+      <div class="pulse-ring"></div>
+      <div class="pulse-dot"></div>
+    </div>
+    <div id="permission-prompt" hidden>
+      <p>Microphone access is needed to listen to your recitation.</p>
+    </div>
+    <div id="offline-badge">
+      <span id="model-status">Loading model...</span>
+      <span class="badge-sep">&middot;</span>
+      on-device recognition
+    </div>
+
+    <a id="github-link" href="https://github.com/yazinsai/offline-tarteel" target="_blank" rel="noopener">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+        <path
+          d="M12 2C6.475 2 2 6.475 2 12a9.994 9.994 0 0 0 6.838 9.488c.5.087.687-.213.687-.476c0-.237-.013-1.024-.013-1.862c-2.512.463-3.162-.612-3.362-1.175c-.113-.288-.6-1.175-1.025-1.413c-.35-.187-.85-.65-.013-.662c.788-.013 1.35.725 1.538 1.025c.9 1.512 2.338 1.087 2.912.825c.088-.65.35-1.087.638-1.337c-2.225-.25-4.55-1.113-4.55-4.938c0-1.088.387-1.987 1.025-2.688c-.1-.25-.45-1.275.1-2.65c0 0 .837-.262 2.75 1.026a9.28 9.28 0 0 1 2.5-.338c.85 0 1.7.112 2.5.337c1.912-1.3 2.75-1.024 2.75-1.024c.55 1.375.2 2.4.1 2.65c.637.7 1.025 1.587 1.025 2.687c0 3.838-2.337 4.688-4.562 4.938c.362.312.675.912.675 1.85c0 1.337-.013 2.412-.013 2.75c0 .262.188.574.688.474A10.016 10.016 0 0 0 22 12c0-5.525-4.475-10-10-10Z" />
+      </svg>
+      Open source
+    </a>
+
+    <dialog id="report-dialog">
+      <div class="dialog-content">
+        <h2 class="dialog-title">Report Error</h2>
+
+        <div class="dialog-section">
+          <label class="dialog-label">Your recording</label>
+          <audio id="report-audio" controls></audio>
+        </div>
+
+        <div class="dialog-section">
+          <label class="dialog-label">What were you reciting?</label>
+          <div class="verse-selectors">
+            <select id="report-surah"></select>
+            <select id="report-ayah"></select>
+          </div>
+        </div>
+
+        <div class="dialog-section">
+          <label class="dialog-label">Model predicted</label>
+          <p id="report-prediction" class="prediction-text"></p>
+        </div>
+
+        <div class="dialog-section">
+          <label class="dialog-label">Notes (optional)</label>
+          <textarea id="report-notes" rows="3" placeholder="Describe the issue..."></textarea>
+        </div>
+
+        <div class="dialog-actions">
+          <button id="btn-submit-report" class="action-btn action-btn--report">Submit</button>
+          <button id="btn-cancel-report" class="action-btn action-btn--restart">Cancel</button>
+        </div>
+
+        <p id="report-status" class="report-status" hidden></p>
+      </div>
+    </dialog>
+  </div>
+  <script>
+    // Unregister old service worker that cached stale assets
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function (regs) {
+        for (var r of regs) r.unregister();
+      });
+      caches.keys().then(function (keys) {
+        for (var k of keys) caches.delete(k);
+      });
+    }
+  </script>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
 </html>
