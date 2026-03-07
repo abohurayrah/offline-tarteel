@@ -16,6 +16,9 @@ dist-ssr
 # Individual mushaf layout JSONs (redundant — combined into mushaf-pages.json)
 public/mushaf-layout/
 
+# Model cache (large .nemo downloads)
+public/.cache/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
