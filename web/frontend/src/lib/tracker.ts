@@ -115,6 +115,15 @@ export class RecitationTracker {
   private silenceSamples = 0;
   private staleCycles = 0;
 
+  // Verse transition anti-bounce state
+  private transitionCooldown = 0;       // cycles to suppress backward jumps after verse advance
+  private lastConfirmedAyah = -1;       // highest ayah number confirmed in current surah
+  private lastConfirmedSurah = -1;
+
+  // Transcript accumulation across cycles (for long verses)
+  private accumulatedText = "";
+  private accumulatedCycles = 0;
+
   // Ambiguity guard deferral tracking
   private lastDeferredRef: string | null = null;
   private consecutiveDeferrals = 0;
@@ -185,6 +194,11 @@ export class RecitationTracker {
     }
     this.newAudioCount = 0;
 
+    // Decrement transition cooldown
+    if (this.transitionCooldown > 0) {
+      this.transitionCooldown--;
+    }
+
     // Transcribe and normalize Arabic
     const { text: rawText } = await this.transcribe(this.fullAudio.slice());
     const text = normalizeArabic(rawText);
@@ -218,35 +232,45 @@ export class RecitationTracker {
     if (!advanced) {
       this.staleCycles++;
       // Before giving up, check if user jumped to a nearby verse
+      // Apply hysteresis: during cooldown, require much higher score to switch
+      // and never switch backward within same surah
       if (this.staleCycles >= 2 && text.length >= 8 && this.trackingVerse) {
         const jumpHint: [number, number] = [this.trackingVerse.surah, this.trackingVerse.ayah];
-        const jumpMatch = this.db.matchVerseNarrow(text, jumpHint, 3, 0.5);
+        const jumpThreshold = this.transitionCooldown > 0 ? 0.7 : 0.5;
+        const jumpMatch = this.db.matchVerseNarrow(text, jumpHint, 3, jumpThreshold);
         if (jumpMatch && (jumpMatch.surah !== this.trackingVerse.surah || jumpMatch.ayah !== this.trackingVerse.ayah)) {
-          const newVerse = this.db.getVerse(jumpMatch.surah, jumpMatch.ayah);
-          if (newVerse) {
-            this.lastEmittedRef = [this.trackingVerse.surah, this.trackingVerse.ayah];
-            this.lastEmittedText = this.trackingVerse.text_norm!;
-            this._exitTracking("verse jump detected");
-            const ref: [number, number] = [newVerse.surah, newVerse.ayah];
-            const surrounding = getSurroundingVerses(this.db, newVerse.surah, newVerse.ayah);
-            messages.push({
-              type: "verse_match",
-              surah: newVerse.surah,
-              ayah: newVerse.ayah,
-              verse_text: newVerse.text_uthmani,
-              surah_name: newVerse.surah_name,
-              confidence: Math.round(jumpMatch.score * 100) / 100,
-              surrounding_verses: surrounding,
-            });
-            this.hasEverMatched = true;
-            this.cyclesSinceEmit = 0;
-            this.prevEmittedRef = this.lastEmittedRef;
-            this.prevEmittedText = this.lastEmittedText;
-            this.lastEmittedRef = ref;
-            this.lastEmittedText = newVerse.text_norm!;
-            this._enterTracking(newVerse, ref);
-            this.fullAudio = this.fullAudio.slice(-TRIGGER_SAMPLES);
-            return messages;
+          // Anti-bounce: during cooldown, block backward jumps within same surah
+          const isBackward = jumpMatch.surah === this.trackingVerse.surah &&
+                            jumpMatch.ayah < this.trackingVerse.ayah;
+          if (isBackward && this.transitionCooldown > 0) {
+            // Suppress backward jump during cooldown — likely stale audio
+          } else {
+            const newVerse = this.db.getVerse(jumpMatch.surah, jumpMatch.ayah);
+            if (newVerse) {
+              this.lastEmittedRef = [this.trackingVerse.surah, this.trackingVerse.ayah];
+              this.lastEmittedText = this.trackingVerse.text_norm!;
+              this._exitTracking("verse jump detected");
+              const ref: [number, number] = [newVerse.surah, newVerse.ayah];
+              const surrounding = getSurroundingVerses(this.db, newVerse.surah, newVerse.ayah);
+              messages.push({
+                type: "verse_match",
+                surah: newVerse.surah,
+                ayah: newVerse.ayah,
+                verse_text: newVerse.text_uthmani,
+                surah_name: newVerse.surah_name,
+                confidence: Math.round(jumpMatch.score * 100) / 100,
+                surrounding_verses: surrounding,
+              });
+              this.hasEverMatched = true;
+              this.cyclesSinceEmit = 0;
+              this.prevEmittedRef = this.lastEmittedRef;
+              this.prevEmittedText = this.lastEmittedText;
+              this.lastEmittedRef = ref;
+              this.lastEmittedText = newVerse.text_norm!;
+              this._enterTracking(newVerse, ref);
+              this.fullAudio = this.fullAudio.slice(-TRIGGER_SAMPLES);
+              return messages;
+            }
           }
         }
       }
@@ -295,6 +319,15 @@ export class RecitationTracker {
         this.lastEmittedRef = curRef;
         this.lastEmittedText = this.trackingVerse!.text_norm!;
         this.cyclesSinceEmit = 0;
+
+        // Track highest confirmed ayah for anti-bounce
+        if (this.trackingVerse!.surah === this.lastConfirmedSurah) {
+          this.lastConfirmedAyah = Math.max(this.lastConfirmedAyah, this.trackingVerse!.ayah);
+        } else {
+          this.lastConfirmedSurah = this.trackingVerse!.surah;
+          this.lastConfirmedAyah = this.trackingVerse!.ayah;
+        }
+
         const nextV = this.db.getNextVerse(curRef[0], curRef[1]);
         this._exitTracking("verse complete");
 
@@ -320,14 +353,21 @@ export class RecitationTracker {
           this.lastEmittedRef = nextRef;
           this.lastEmittedText = nextV.text_norm!;
           this._enterTracking(nextV, nextRef);
+
+          // Activate anti-bounce cooldown (3 cycles ≈ 1.5s)
+          this.transitionCooldown = 3;
         }
 
-        // Reset audio window — keep last 2s
+        // Buffer trim on verse advance — keep ~1.0s
+        // Balance: enough audio for next verse tracking, but trim stale audio
+        // from completed verse to prevent backward-matching contamination
         const keepSamples = Math.min(
           this.fullAudio.length,
-          TRIGGER_SAMPLES,
+          Math.floor(16000 * 1.0),
         );
         this.fullAudio = this.fullAudio.slice(-keepSamples);
+        this.accumulatedText = "";
+        this.accumulatedCycles = 0;
       }
     }
 
@@ -343,7 +383,12 @@ export class RecitationTracker {
 
     // Skip silent chunks
     const tail = this.fullAudio.slice(-TRIGGER_SAMPLES);
-    if (isSilence(tail)) return messages;
+    if (isSilence(tail)) {
+      // Reset accumulated text on silence
+      this.accumulatedText = "";
+      this.accumulatedCycles = 0;
+      return messages;
+    }
 
     // Transcribe and normalize Arabic
     const { text: rawText } = await this.transcribe(this.fullAudio.slice());
@@ -356,19 +401,58 @@ export class RecitationTracker {
       if (residual > 0.7) return messages;
     }
 
+    // Accumulate transcript across discovery cycles for long verses
+    // New text replaces accumulated when it's significantly different
+    // (the audio window slides, so later transcripts extend the text)
+    this.accumulatedCycles++;
+    if (this.accumulatedText) {
+      // Check if new text extends the accumulated (shares a suffix/prefix overlap)
+      const newWords = text.split(" ");
+      const accWords = this.accumulatedText.split(" ");
+      // Try to find overlap: last N words of accumulated match first N words of new
+      let overlapLen = 0;
+      const maxCheck = Math.min(accWords.length, newWords.length, 6);
+      for (let n = maxCheck; n >= 2; n--) {
+        const accTail = accWords.slice(-n).join(" ");
+        const newHead = newWords.slice(0, n).join(" ");
+        if (partialRatio(accTail, newHead) >= 0.7) {
+          overlapLen = n;
+          break;
+        }
+      }
+      if (overlapLen > 0) {
+        // Merge: accumulated + new text after overlap
+        this.accumulatedText = this.accumulatedText + " " + newWords.slice(overlapLen).join(" ");
+      } else if (this.accumulatedCycles <= 4) {
+        // No overlap found but still early — just append
+        this.accumulatedText = this.accumulatedText + " " + text;
+      } else {
+        // Too many cycles without overlap — reset
+        this.accumulatedText = text;
+        this.accumulatedCycles = 1;
+      }
+    } else {
+      this.accumulatedText = text;
+    }
+
+    // Use accumulated text for matching if it's longer than current transcript
+    const matchText = this.accumulatedText.length > text.length * 1.3
+      ? this.accumulatedText
+      : text;
+
     // Match against QuranDB — use narrow matching if we have recent context
     // Always request top-K candidates for live narrowing UI
     let match: Record<string, any> | null;
     if (this.lastEmittedRef && this.cyclesSinceEmit <= 3) {
       match = this.db.matchVerseNarrow(
-        text,
+        matchText,
         this.lastEmittedRef,
         5,
         RAW_TRANSCRIPT_THRESHOLD,
       );
     } else {
       match = this.db.matchVerse(
-        text,
+        matchText,
         RAW_TRANSCRIPT_THRESHOLD,
         4,
         this.lastEmittedRef,
@@ -514,6 +598,8 @@ export class RecitationTracker {
       this.cyclesSinceEmit = 0;
       this.consecutiveDeferrals = 0;
       this.lastDeferredRef = null;
+      this.accumulatedText = "";
+      this.accumulatedCycles = 0;
 
       // For multi-verse spans, advance hint to the last verse
       const ayahEnd = match.ayah_end;
@@ -604,6 +690,14 @@ export class RecitationTracker {
     this.trackingLastWordIdx = -1;
     this.silenceSamples = 0;
     this.staleCycles = 0;
+    this.accumulatedText = "";
+    this.accumulatedCycles = 0;
+
+    // Initialize confirmed verse tracking on first entry
+    if (this.lastConfirmedSurah < 0) {
+      this.lastConfirmedSurah = verse.surah;
+      this.lastConfirmedAyah = verse.ayah;
+    }
   }
 
   private _exitTracking(reason: string): void {
@@ -614,10 +708,15 @@ export class RecitationTracker {
     if (reason === "verse complete") {
       // Caller already updated lastEmittedRef/Text
       this.hasEverMatched = true;
+      // Keep anti-bounce state (cooldown, confirmed ayah) — set by caller
     } else if (reason.startsWith("stale") && progress < 0.5) {
       // Low progress + stale = likely misidentification
       this.lastEmittedRef = this.prevEmittedRef;
       this.lastEmittedText = this.prevEmittedText;
+      // Reset anti-bounce on misidentification
+      this.transitionCooldown = 0;
+      this.lastConfirmedAyah = -1;
+      this.lastConfirmedSurah = -1;
     } else if (
       reason.startsWith("stale") &&
       this.trackingVerseWords.length > 0 &&
@@ -629,6 +728,11 @@ export class RecitationTracker {
       this.lastEmittedText = this.trackingVerseWords
         .slice(0, this.trackingLastWordIdx + 1)
         .join(" ");
+    } else if (reason === "extended silence") {
+      // Reset anti-bounce on silence exit — user may have stopped
+      this.transitionCooldown = 0;
+      this.lastConfirmedAyah = -1;
+      this.lastConfirmedSurah = -1;
     }
 
     this.trackingVerse = null;
@@ -636,5 +740,7 @@ export class RecitationTracker {
     this.trackingLastWordIdx = -1;
     this.silenceSamples = 0;
     this.staleCycles = 0;
+    this.accumulatedText = "";
+    this.accumulatedCycles = 0;
   }
 }
