@@ -19,6 +19,10 @@ public/mushaf-layout/
 # Model cache (large .nemo downloads)
 public/.cache/
 
+# ONNX model weights (large, downloaded separately)
+public/models/whisper-quran/onnx/
+*.onnx
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
