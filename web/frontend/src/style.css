@@ -503,6 +503,145 @@ body {
   display: block;
 }
 
+/* ── Narrowing mode toggle button ── */
+.narrowing-toggle {
+  position: fixed;
+  bottom: 4.5rem;
+  left: 1rem;
+  z-index: 100;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(194, 160, 91, 0.3);
+  background: rgba(30, 28, 24, 0.85);
+  backdrop-filter: blur(10px);
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.25s ease;
+}
+
+.narrowing-toggle:hover {
+  border-color: rgba(194, 160, 91, 0.6);
+  color: var(--accent-gold);
+  transform: scale(1.05);
+}
+
+.narrowing-toggle.active {
+  background: rgba(194, 160, 91, 0.15);
+  border-color: rgba(194, 160, 91, 0.6);
+  color: var(--accent-gold);
+  box-shadow: 0 4px 16px rgba(194, 160, 91, 0.25);
+}
+
+/* ── Candidate list panel ── */
+#candidate-list {
+  position: fixed;
+  bottom: 8rem;
+  left: 1rem;
+  z-index: 99;
+  width: 340px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: rgba(30, 28, 24, 0.92);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(194, 160, 91, 0.25);
+  border-radius: 12px;
+  padding: 0.5rem;
+  opacity: 0;
+  transform: translateY(10px);
+  pointer-events: none;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+#candidate-list.visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.candidate-item {
+  position: relative;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  overflow: hidden;
+  transition: background 0.2s ease;
+}
+
+.candidate-item + .candidate-item {
+  border-top: 1px solid rgba(194, 160, 91, 0.08);
+}
+
+.candidate-item:hover {
+  background: rgba(194, 160, 91, 0.06);
+}
+
+.candidate-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  background: rgba(194, 160, 91, 0.06);
+  border-radius: 8px;
+  transition: width 0.4s ease;
+}
+
+.candidate--top .candidate-bar {
+  background: rgba(194, 160, 91, 0.12);
+}
+
+.candidate--likely .candidate-bar {
+  background: rgba(194, 160, 91, 0.08);
+}
+
+.candidate-info {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.25rem;
+}
+
+.candidate-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.candidate--top .candidate-label {
+  color: var(--accent-gold);
+  font-weight: 600;
+}
+
+.candidate-score {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.candidate--top .candidate-score {
+  color: var(--accent-gold);
+}
+
+.candidate-preview {
+  position: relative;
+  font-family: var(--font-quran);
+  font-size: 1rem;
+  line-height: 1.8;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.candidate--top .candidate-preview {
+  color: var(--accent-gold);
+}
+
 /* ── Ayah end marker (۝ + number) ── */
 .verse-marker {
   font-family: var(--font-quran);
@@ -1171,6 +1310,17 @@ body {
 
   #listening-status .listening-status-main {
     font-size: 1.3rem;
+  }
+
+  #candidate-list {
+    width: calc(100vw - 2rem);
+    bottom: 7.5rem;
+  }
+
+  .narrowing-toggle {
+    bottom: 4rem;
+    width: 42px;
+    height: 42px;
   }
 }
 

@@ -311,6 +311,9 @@ export class QuranDB {
         bonus: Math.round(bon * 1000) / 1000,
         score: Math.round(total * 1000) / 1000,
         text_norm: (v.text_norm ?? "").slice(0, 60),
+        surah_name: v.surah_name,
+        surah_name_en: v.surah_name_en,
+        text_uthmani: v.text_uthmani.slice(0, 80),
       }));
 
     // Pass 2: multi-ayah spans
@@ -411,14 +414,26 @@ export class QuranDB {
 
     if (scored.length > 0 && scored[0][3] >= threshold) {
       const [bestV, bestRaw, bestBonus, bestScore] = scored[0];
-      return {
+      const result: Record<string, any> = {
         ...bestV,
         score: bestScore,
         raw_score: bestRaw,
         bonus: bestBonus,
       };
+      result.runners_up = scored.slice(0, 10).map(([v, raw, bon, total]) => ({
+        surah: v.surah,
+        ayah: v.ayah,
+        raw_score: Math.round(raw * 1000) / 1000,
+        bonus: Math.round(bon * 1000) / 1000,
+        score: Math.round(total * 1000) / 1000,
+        text_norm: (v.text_norm ?? "").slice(0, 60),
+        surah_name: v.surah_name,
+        surah_name_en: v.surah_name_en,
+        text_uthmani: v.text_uthmani.slice(0, 80),
+      }));
+      return result;
     }
 
-    return this.matchVerse(text, threshold, 3, hint);
+    return this.matchVerse(text, threshold, 3, hint, 10);
   }
 }
