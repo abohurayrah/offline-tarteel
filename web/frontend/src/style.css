@@ -1453,6 +1453,23 @@ body {
   transform: scale(1.04);
 }
 
+/* Error word (misread) */
+.mp-word--error {
+  color: #D64545 !important;
+  filter: blur(0) !important;
+  opacity: 1 !important;
+  text-shadow: 0 0 12px rgba(214, 69, 69, 0.4);
+  animation: mp-error-pulse 0.6s ease-in-out;
+}
+
+@keyframes mp-error-pulse {
+  0% { transform: scale(1); }
+  25% { transform: scale(1.12); }
+  50% { transform: scale(0.95); }
+  75% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
 @keyframes mp-reveal {
   0% {
     filter: blur(8px);
@@ -1627,5 +1644,18 @@ body {
 }
 
 .practice-mode .practice-icon--on {
+  display: block;
+}
+
+/* Record toggle icon states (mic ↔ stop) */
+.rec-icon--stop {
+  display: none;
+}
+
+.recording .rec-icon--mic {
+  display: none;
+}
+
+.recording .rec-icon--stop {
   display: block;
 }
