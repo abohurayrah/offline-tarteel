@@ -55,6 +55,29 @@ export interface CandidateListMessage {
   transcript: string;
 }
 
+// ---------------------------------------------------------------------------
+// Forced Alignment message types
+// ---------------------------------------------------------------------------
+export interface WordAlignedMessage {
+  type: "word_aligned";
+  surah: number;
+  ayah: number;
+  word_index: number;
+  total_words: number;
+  confidence: number;        // 0-1 pronunciation quality
+  cumulative_indices: number[]; // all word indices confirmed so far
+}
+
+export interface VerseCompleteMessage {
+  type: "verse_complete";
+  surah: number;
+  ayah: number;
+  overall_score: number;
+  word_scores: number[];     // per-word confidence scores
+  next_surah: number;
+  next_ayah: number;
+}
+
 export interface SurroundingVerse {
   surah: number;
   ayah: number;
@@ -78,7 +101,9 @@ export type WorkerOutbound =
   | WordProgressMessage
   | WordCorrectionMessage
   | RawTranscriptMessage
-  | CandidateListMessage;
+  | CandidateListMessage
+  | WordAlignedMessage
+  | VerseCompleteMessage;
 
 // ---------------------------------------------------------------------------
 // Quran data (from quran.json)
@@ -129,3 +154,9 @@ export const TRACKING_MAX_WINDOW_SAMPLES =
   SAMPLE_RATE * TRACKING_MAX_WINDOW_SECONDS;
 export const STALE_CYCLE_LIMIT = 4;
 export const LOOKAHEAD = 5;
+
+// Forced alignment constants
+export const FA_TRIGGER_SAMPLES = SAMPLE_RATE * 0.3;  // 300ms — fast FA updates
+export const FA_CONFIDENCE_GOOD = 0.7;
+export const FA_CONFIDENCE_WARN = 0.4;
+export const FA_VERSE_COMPLETE_THRESHOLD = 0.85;  // fraction of words needed

@@ -1470,6 +1470,28 @@ body {
   100% { transform: scale(1); }
 }
 
+/* ── Forced Alignment confidence coloring ── */
+.mp-word--fa-good {
+  color: #7a9a5a !important;
+  filter: blur(0) !important;
+  opacity: 1 !important;
+  text-shadow: 0 0 8px rgba(122, 154, 90, 0.3);
+}
+
+.mp-word--fa-warn {
+  color: #C2A05B !important;
+  filter: blur(0) !important;
+  opacity: 1 !important;
+  text-shadow: 0 0 8px rgba(194, 160, 91, 0.3);
+}
+
+.mp-word--fa-error {
+  color: #D64545 !important;
+  filter: blur(0) !important;
+  opacity: 1 !important;
+  text-shadow: 0 0 8px rgba(214, 69, 69, 0.3);
+}
+
 @keyframes mp-reveal {
   0% {
     filter: blur(8px);

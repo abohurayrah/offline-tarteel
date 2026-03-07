@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FA Benchmark</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, monospace; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+    h1 { color: #C2A05B; margin-bottom: 8px; font-size: 18px; }
+    .subtitle { color: #888; margin-bottom: 20px; font-size: 13px; }
+    #controls { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+    button { background: #2a2a4a; color: #C2A05B; border: 1px solid #C2A05B33; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    button:hover { background: #3a3a5a; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    button.running { background: #C2A05B22; border-color: #C2A05B; }
+    #status { padding: 10px 14px; background: #2a2a4a; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
+    #progress-bar { width: 100%; height: 6px; background: #2a2a4a; border-radius: 3px; margin-bottom: 16px; overflow: hidden; }
+    #progress-fill { height: 100%; background: #C2A05B; width: 0%; transition: width 0.3s; }
+    #summary { margin-bottom: 16px; padding: 12px; background: #1e3a1e; border: 1px solid #3a5a3a; border-radius: 6px; display: none; }
+    #summary.fail { background: #3a1e1e; border-color: #5a3a3a; }
+    #summary h3 { color: #7a9a5a; margin-bottom: 8px; font-size: 14px; }
+    #summary.fail h3 { color: #D64545; }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; }
+    .stat { font-size: 13px; }
+    .stat-val { color: #C2A05B; font-weight: bold; }
+    #log { background: #0d0d1a; border-radius: 6px; padding: 12px; max-height: 600px; overflow-y: auto; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+    .log-pass { color: #7a9a5a; }
+    .log-fail { color: #D64545; }
+    .log-warn { color: #C2A05B; }
+    .log-info { color: #7ec8e3; }
+    .log-dim { color: #555; }
+    .log-header { color: #C2A05B; font-weight: bold; font-size: 13px; border-bottom: 1px solid #333; padding-bottom: 4px; margin-top: 12px; }
+    select { background: #2a2a4a; color: #e0e0e0; border: 1px solid #444; padding: 6px 10px; border-radius: 6px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>CTC Forced Alignment Benchmark</h1>
+  <p class="subtitle">Feeds audio-samples through the inference pipeline and measures discovery + FA accuracy</p>
+
+  <div id="controls">
+    <button id="btn-run-all">Run All Scenarios</button>
+    <button id="btn-run-selected">Run Selected</button>
+    <select id="scenario-select">
+      <option value="all">All Scenarios</option>
+      <option value="fatihah">Al-Fatihah (1:1-7)</option>
+      <option value="short-surahs">Short Surahs (112-114)</option>
+      <option value="skip">Skip Test (jump within surah)</option>
+      <option value="surah-jump">Surah Jump Test</option>
+      <option value="long-verse">Long Verse (2:255)</option>
+      <option value="batch-50">Batch 50 Random Ayahs</option>
+      <option value="full-juz-amma">Full Juz Amma (78-114)</option>
+    </select>
+    <button id="btn-stop">Stop</button>
+  </div>
+
+  <div id="status">Idle — model not loaded</div>
+  <div id="progress-bar"><div id="progress-fill"></div></div>
+  <div id="summary"></div>
+  <div id="log"></div>
+
+  <script type="module" src="./benchmark.ts"></script>
+</body>
+</html>

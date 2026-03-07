@@ -11,8 +11,15 @@ import type {
   WordProgressMessage,
   WordCorrectionMessage,
   CandidateListMessage,
+  WordAlignedMessage,
+  VerseCompleteMessage,
   WorkerOutbound,
   QuranVerse,
+} from "./lib/types";
+
+import {
+  FA_CONFIDENCE_GOOD,
+  FA_CONFIDENCE_WARN,
 } from "./lib/types";
 
 import type { MushafPageData } from "./lib/mushaf-renderer";
@@ -440,6 +447,120 @@ function handleMushafWordCorrection(msg: WordCorrectionMessage): void {
       "color: #ff6b6b; font-weight: bold",
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Forced Alignment message handlers
+// ---------------------------------------------------------------------------
+
+// Track FA state for mushaf word highlighting
+let _faTrackingKey = "";
+let _faConfirmedWords = new Set<number>();
+
+function handleMushafWordAligned(msg: WordAlignedMessage): void {
+  const targetPage = getPageForVerse(msg.surah, msg.ayah);
+  if (!targetPage || targetPage !== state.currentMushafPage) return;
+
+  const key = `${msg.surah}:${msg.ayah}`;
+  if (key !== _faTrackingKey) {
+    _faConfirmedWords = new Set<number>();
+    _faTrackingKey = key;
+  }
+
+  // Add confirmed words
+  for (const idx of msg.cumulative_indices) {
+    _faConfirmedWords.add(idx);
+  }
+
+  // Track that this verse had progress
+  _wordTrackedVerses.add(key);
+
+  // Get words for this verse from page data for confidence coloring
+  const allMushafWords = $mushafPage.querySelectorAll<HTMLElement>(
+    `.mp-word[data-surah="${msg.surah}"][data-ayah="${msg.ayah}"]`,
+  );
+
+  // Highlight all confirmed words up to current position
+  for (let i = 0; i < allMushafWords.length; i++) {
+    const w = allMushafWords[i];
+    if (_faConfirmedWords.has(i)) {
+      w.classList.remove("mp-word--hidden");
+      w.classList.add("mp-word--spoken");
+
+      // Clear previous confidence classes
+      w.classList.remove("mp-word--fa-good", "mp-word--fa-warn", "mp-word--fa-error");
+
+      // Apply confidence-based color only for the current word
+      if (i === msg.word_index) {
+        w.classList.add("mp-word--current");
+        if (msg.confidence >= FA_CONFIDENCE_GOOD) {
+          w.classList.add("mp-word--fa-good");
+        } else if (msg.confidence >= FA_CONFIDENCE_WARN) {
+          w.classList.add("mp-word--fa-warn");
+        } else {
+          w.classList.add("mp-word--fa-error");
+        }
+      } else {
+        w.classList.remove("mp-word--current");
+      }
+    }
+  }
+
+  // Look up Arabic word text for logging
+  let wordText = "";
+  if (state.mushafPages && targetPage > 0) {
+    const pageData = state.mushafPages[targetPage - 1];
+    for (const line of pageData.lines) {
+      if (line.type === "text" && line.words) {
+        for (const w of line.words) {
+          const [s, a, widx] = w.location.split(":");
+          if (s === String(msg.surah) && a === String(msg.ayah) && parseInt(widx) - 1 === msg.word_index) {
+            wordText = w.word;
+          }
+        }
+      }
+    }
+  }
+
+  console.log(
+    `%c[FA] ${msg.surah}:${msg.ayah} word ${msg.word_index}/${msg.total_words}` +
+    (wordText ? ` "${wordText}"` : "") +
+    ` conf=${(msg.confidence * 100).toFixed(1)}%` +
+    ` words=[${msg.cumulative_indices.join(",")}]`,
+    msg.confidence >= FA_CONFIDENCE_GOOD ? "color: #7a9a5a; font-weight: bold" :
+    msg.confidence >= FA_CONFIDENCE_WARN ? "color: #C2A05B; font-weight: bold" :
+    "color: #D64545; font-weight: bold",
+  );
+}
+
+async function handleMushafVerseComplete(msg: VerseCompleteMessage): Promise<void> {
+  const key = `${msg.surah}:${msg.ayah}`;
+  state.revealedVerses.add(key);
+  _wordTrackedVerses.add(key);
+
+  // Clear current highlights on completed verse
+  const words = $mushafPage.querySelectorAll<HTMLElement>(
+    `.mp-word[data-surah="${msg.surah}"][data-ayah="${msg.ayah}"]`,
+  );
+  for (const w of words) {
+    w.classList.remove("mp-word--hidden", "mp-word--current");
+    w.classList.add("mp-word--spoken", "mp-word--fa-good");
+  }
+
+  console.log(
+    `%c[FA VERSE COMPLETE] ${msg.surah}:${msg.ayah} score=${(msg.overall_score * 100).toFixed(1)}% → ${msg.next_surah}:${msg.next_ayah}`,
+    "color: #7a9a5a; font-weight: bold; font-size: 14px",
+  );
+
+  // Navigate to next verse's page if needed
+  const nextPage = getPageForVerse(msg.next_surah, msg.next_ayah);
+  if (nextPage && nextPage !== state.currentMushafPage) {
+    await navigateToMushafPage(nextPage);
+  }
+
+  // Reset FA tracking for next verse
+  _faConfirmedWords = new Set<number>();
+  _faTrackingKey = `${msg.next_surah}:${msg.next_ayah}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -986,6 +1107,16 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
       );
     }
     handleCandidateList(msg);
+  } else if (msg.type === "word_aligned") {
+    // Forced Alignment: word confirmed with confidence
+    if (state.mushafDataReady) {
+      handleMushafWordAligned(msg);
+    }
+  } else if (msg.type === "verse_complete") {
+    // Forced Alignment: entire verse completed
+    if (state.mushafDataReady) {
+      handleMushafVerseComplete(msg);
+    }
   }
 }
 
@@ -1176,6 +1307,8 @@ document.addEventListener("DOMContentLoaded", () => {
       _mushafTrackingKey = "";
       _mushafErrorWords = new Set<number>();
       _mushafErrorKey = "";
+      _faConfirmedWords = new Set<number>();
+      _faTrackingKey = "";
       state.practiceMode = true;
       $app.classList.add("practice-mode");
       $rawTranscript.textContent = "";
@@ -1220,6 +1353,8 @@ document.addEventListener("DOMContentLoaded", () => {
     _mushafTrackingKey = "";
     _mushafErrorWords = new Set<number>();
     _mushafErrorKey = "";
+    _faConfirmedWords = new Set<number>();
+    _faTrackingKey = "";
     $verses.innerHTML = "";
     $rawTranscript.textContent = "";
     $rawTranscript.classList.remove("visible");
