@@ -81,3 +81,88 @@ export function fragmentScore(query: string, ref: string): number {
   if (query.length === 0) return 1.0;
   return Math.max(0, 1 - semiGlobalDistance(query, ref) / query.length);
 }
+
+/**
+ * Word similarity score using Levenshtein ratio.
+ * Returns 1.0 for identical words, 0.0 for completely different.
+ */
+function wordSimilarity(w1: string, w2: string): number {
+  if (w1 === w2) return 1.0;
+  if (w1.length === 0 || w2.length === 0) return 0.0;
+  return ratio(w1, w2);
+}
+
+/**
+ * Sellers' word-level approximate substring matching.
+ * Finds the best contiguous subsequence of verseWords that matches transcriptWords.
+ * Returns { score: 0-1, startIdx, endIdx } where startIdx/endIdx are word indices.
+ *
+ * Algorithm: For each possible starting position in verse, extract a window
+ * of verse words matching the transcript length, compute similarity, and
+ * return the best-scoring window.
+ */
+export function sellersWordMatch(
+  transcriptWords: string[],
+  verseWords: string[],
+  wordSimilarityThreshold = 0.7
+): { score: number; startIdx: number; endIdx: number } {
+  if (transcriptWords.length === 0 || verseWords.length === 0) {
+    return { score: 0, startIdx: 0, endIdx: 0 };
+  }
+
+  const tLen = transcriptWords.length;
+  let bestScore = 0;
+  let bestStart = 0;
+  let bestEnd = 0;
+
+  // Try all possible starting positions in verse
+  for (let start = 0; start <= verseWords.length - tLen; start++) {
+    const end = start + tLen;
+    const window = verseWords.slice(start, end);
+
+    // Score this window: count words that match with similarity >= threshold
+    let matches = 0;
+    let totalSim = 0;
+    for (let i = 0; i < tLen; i++) {
+      const sim = wordSimilarity(transcriptWords[i], window[i]);
+      totalSim += sim;
+      if (sim >= wordSimilarityThreshold) {
+        matches++;
+      }
+    }
+
+    // Score combines match ratio and average similarity
+    const matchRatio = matches / tLen;
+    const avgSim = totalSim / tLen;
+    const score = 0.6 * matchRatio + 0.4 * avgSim;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestStart = start;
+      bestEnd = end;
+    }
+  }
+
+  // Also try windows slightly longer than transcript (±1 word) for flexibility
+  for (let start = 0; start < verseWords.length; start++) {
+    for (let windowSize of [tLen - 1, tLen + 1]) {
+      if (windowSize < 1 || start + windowSize > verseWords.length) continue;
+
+      const end = start + windowSize;
+      const window = verseWords.slice(start, end);
+
+      // Use string-based comparison for variable-length windows
+      const windowText = window.join(" ");
+      const transcriptText = transcriptWords.join(" ");
+      const score = ratio(transcriptText, windowText);
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestStart = start;
+        bestEnd = end;
+      }
+    }
+  }
+
+  return { score: bestScore, startIdx: bestStart, endIdx: bestEnd };
+}

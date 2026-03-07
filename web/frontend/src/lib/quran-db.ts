@@ -1,4 +1,4 @@
-import { ratio, fragmentScore } from "./levenshtein";
+import { ratio, fragmentScore, sellersWordMatch } from "./levenshtein";
 import type { QuranVerse } from "./types";
 
 /**
@@ -196,6 +196,7 @@ export class QuranDB {
   /**
    * Length-aware scoring: selects ratio() or fragmentScore() based on
    * the length ratio between transcript and verse.
+   * Enhanced with Sellers' character-level semi-global alignment for fragments.
    */
   private static _smartScore(
     textNoSpace: string,
@@ -206,12 +207,29 @@ export class QuranDB {
     if (lengthRatio >= 0.7 && lengthRatio <= 1.3) {
       return ratio(textNoSpace, verseNs);
     } else if (lengthRatio < 0.7) {
+      // Sellers' semi-global alignment via fragmentScore
       const frag = fragmentScore(textNoSpace, verseNs);
       const r = ratio(textNoSpace, verseNs);
       return Math.max(frag, 0.6 * frag + 0.4 * r);
     } else {
       return ratio(textNoSpace, verseNs);
     }
+  }
+
+  /**
+   * Sellers' word-level approximate substring matching.
+   * Finds the best contiguous word sequence in the verse that matches the transcript.
+   * Only applied when transcript is significantly shorter than verse (mid-ayah scenario).
+   */
+  private static _sellersScore(
+    normText: string,
+    verseWords: string[],
+  ): number {
+    const textWords = normText.split(" ");
+    if (textWords.length < 2 || verseWords.length < 3) return 0;
+
+    const { score } = sellersWordMatch(textWords, verseWords);
+    return score;
   }
 
   /**
@@ -301,6 +319,22 @@ export class QuranDB {
       raw = Math.max(raw, spacedRatio);
       if (v.text_norm_no_bsm) {
         raw = Math.max(raw, ratio(normText, v.text_norm_no_bsm));
+      }
+      // Sellers' word-level matching: for mid-ayah recognition
+      // Apply when transcript is significantly shorter than verse
+      const textWords = normText.split(" ");
+      if (v.text_words && v.text_words.length >= 5 && textWords.length < v.text_words.length * 0.8) {
+        const sellersScore = QuranDB._sellersScore(normText, v.text_words);
+        raw = Math.max(raw, sellersScore * 0.95); // slight discount to avoid false positives
+
+        // Also try against no-bismillah version
+        if (v.text_norm_no_bsm) {
+          const noBsmWords = v.text_norm_no_bsm.split(" ");
+          if (noBsmWords.length >= 3) {
+            const sellersNoBsm = QuranDB._sellersScore(normText, noBsmWords);
+            raw = Math.max(raw, sellersNoBsm * 0.95);
+          }
+        }
       }
       // Mid-ayah sliding window: catches partial/mid-verse transcripts
       if (v.text_words && v.text_words.length >= 5 && noSpaceText.length < v.text_norm_ns!.length * 0.8) {
@@ -442,6 +476,22 @@ export class QuranDB {
       raw = Math.max(raw, spacedRatio);
       if (v.text_norm_no_bsm) {
         raw = Math.max(raw, ratio(normText, v.text_norm_no_bsm));
+      }
+      // Sellers' word-level matching: for mid-ayah recognition
+      // Apply when transcript is significantly shorter than verse
+      const textWords = normText.split(" ");
+      if (v.text_words && v.text_words.length >= 5 && textWords.length < v.text_words.length * 0.8) {
+        const sellersScore = QuranDB._sellersScore(normText, v.text_words);
+        raw = Math.max(raw, sellersScore * 0.95); // slight discount to avoid false positives
+
+        // Also try against no-bismillah version
+        if (v.text_norm_no_bsm) {
+          const noBsmWords = v.text_norm_no_bsm.split(" ");
+          if (noBsmWords.length >= 3) {
+            const sellersNoBsm = QuranDB._sellersScore(normText, noBsmWords);
+            raw = Math.max(raw, sellersNoBsm * 0.95);
+          }
+        }
       }
       // Mid-ayah sliding window: catches partial/mid-verse transcripts
       if (v.text_words && v.text_words.length >= 5 && noSpaceText.length < v.text_norm_ns!.length * 0.8) {
