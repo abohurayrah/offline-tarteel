@@ -153,12 +153,18 @@ async function waitForWorkerIdle(quietMs = 1500, maxWaitMs = 60000): Promise<voi
 }
 
 async function resetWorker(): Promise<void> {
-  // Wait for any in-flight processing to complete before resetting
-  await waitForWorkerIdle(800, 30000);
+  // Wait for any in-flight processing to complete before resetting.
+  // The worker's onmessage is async, so multiple inference calls may be
+  // in flight concurrently. Use a long quiet window to ensure ALL of them
+  // have finished posting results before we reset.
+  await waitForWorkerIdle(2500, 30000);
   messageBuffer = [];
   worker?.postMessage({ type: "reset" });
-  // Wait for reset to be processed
-  await new Promise((r) => setTimeout(r, 300));
+  // Wait for reset to be processed and any final stale messages to arrive
+  await new Promise((r) => setTimeout(r, 500));
+  messageBuffer = [];
+  // Double-check: wait again briefly to catch any very late arrivals
+  await waitForWorkerIdle(800, 5000);
   messageBuffer = [];
 }
 

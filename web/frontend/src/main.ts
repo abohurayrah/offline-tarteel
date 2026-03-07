@@ -9,7 +9,6 @@ import type {
   VerseMatchMessage,
   RawTranscriptMessage,
   WordProgressMessage,
-  WordCorrectionMessage,
   CandidateListMessage,
   WordAlignedMessage,
   VerseCompleteMessage,
@@ -409,46 +408,6 @@ function handleMushafWordProgress(msg: WordProgressMessage): void {
   }
 }
 
-// Handle word correction (misread) in mushaf mode — show red and block
-function handleMushafWordCorrection(msg: WordCorrectionMessage): void {
-  const targetPage = getPageForVerse(msg.surah, msg.ayah);
-  if (!targetPage || targetPage !== state.currentMushafPage) return;
-
-  const key = `${msg.surah}:${msg.ayah}`;
-  _mushafErrorKey = key;
-  const errorIndices = msg.corrections.map((c) => c.word_index);
-  for (const idx of errorIndices) {
-    _mushafErrorWords.add(idx);
-  }
-
-  // Show red highlight on error words
-  mushafHighlightErrors($mushafPage, msg.surah, msg.ayah, errorIndices);
-
-  // Log with word text
-  for (const c of msg.corrections) {
-    let wordText = "";
-    if (state.mushafPages) {
-      const pageData = state.mushafPages[targetPage - 1];
-      for (const line of pageData.lines) {
-        if (line.type === "text" && line.words) {
-          for (const w of line.words) {
-            const [s, a, widx] = w.location.split(":");
-            if (s === String(msg.surah) && a === String(msg.ayah) && parseInt(widx) === c.word_index + 1) {
-              wordText = w.word;
-            }
-          }
-        }
-      }
-    }
-    console.log(
-      `%c[ERROR] ${msg.surah}:${msg.ayah} word ${c.word_index}` +
-      (wordText ? ` "${wordText}"` : "") +
-      ` — ${c.error_type}: expected "${c.expected}", got "${c.got}"`,
-      "color: #ff6b6b; font-weight: bold",
-    );
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Forced Alignment message handlers
 // ---------------------------------------------------------------------------
@@ -831,29 +790,6 @@ function handleWordProgress(msg: WordProgressMessage): void {
   }
 }
 
-function handleWordCorrection(msg: WordCorrectionMessage): void {
-  const lastGroup = state.groups[state.groups.length - 1];
-  if (!lastGroup || lastGroup.surah !== msg.surah) return;
-
-  const verseEl = lastGroup.element.querySelector<HTMLElement>(
-    `.verse[data-ayah="${msg.ayah}"]`,
-  );
-  if (!verseEl) return;
-
-  // Build set of error word indices
-  const errorIndices = new Set(msg.corrections.map((c) => c.word_index));
-
-  const wordEls = verseEl.querySelectorAll<HTMLElement>(".word");
-  for (const wordEl of wordEls) {
-    const idx = parseInt(wordEl.getAttribute("data-word-idx") || "-1");
-    if (errorIndices.has(idx)) {
-      wordEl.classList.add("word--error");
-    } else {
-      wordEl.classList.remove("word--error");
-    }
-  }
-}
-
 function handleRawTranscript(msg: RawTranscriptMessage): void {
   $rawTranscript.textContent = msg.text;
   $rawTranscript.classList.add("visible");
@@ -1079,16 +1015,6 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
       handleMushafWordProgress(msg);
     } else {
       handleWordProgress(msg);
-    }
-  } else if (msg.type === "word_correction") {
-    console.log(
-      `%c[CORRECTION] ${msg.surah}:${msg.ayah} errors at words: [${msg.corrections.map((c) => c.word_index).join(",")}]`,
-      "color: #ff6b6b",
-    );
-    if (state.mushafDataReady) {
-      handleMushafWordCorrection(msg);
-    } else {
-      handleWordCorrection(msg);
     }
   } else if (msg.type === "raw_transcript") {
     console.log(

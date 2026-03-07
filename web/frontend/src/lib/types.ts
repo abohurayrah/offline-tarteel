@@ -20,20 +20,6 @@ export interface WordProgressMessage {
   matched_indices: number[];
 }
 
-export interface WordCorrection {
-  word_index: number;
-  expected: string;
-  got: string;
-  error_type: "substitution" | "deletion" | "insertion";
-}
-
-export interface WordCorrectionMessage {
-  type: "word_correction";
-  surah: number;
-  ayah: number;
-  corrections: WordCorrection[];
-}
-
 export interface RawTranscriptMessage {
   type: "raw_transcript";
   text: string;
@@ -99,7 +85,6 @@ export type WorkerOutbound =
   | { type: "error"; message: string }
   | VerseMatchMessage
   | WordProgressMessage
-  | WordCorrectionMessage
   | RawTranscriptMessage
   | CandidateListMessage
   | WordAlignedMessage
