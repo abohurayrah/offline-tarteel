@@ -214,6 +214,41 @@ export class QuranDB {
     }
   }
 
+  /**
+   * Sliding word-window score: slides transcript across verse words,
+   * comparing transcript against each window of the verse.
+   * Catches mid-ayah starts where user begins reading from the middle.
+   */
+  private static _slidingWordWindowScore(
+    normText: string,
+    verseWords: string[],
+  ): number {
+    if (verseWords.length < 3) return 0;
+    const textWords = normText.split(" ");
+    if (textWords.length < 2) return 0;
+
+    const windowSize = textWords.length;
+    let bestScore = 0;
+
+    // Slide transcript-sized word window across verse words
+    for (let start = 0; start <= verseWords.length - Math.min(windowSize, verseWords.length); start++) {
+      const end = Math.min(start + windowSize + 1, verseWords.length); // +1 to allow slight overrun
+      const window = verseWords.slice(start, end).join(" ");
+      const score = ratio(normText, window);
+      if (score > bestScore) bestScore = score;
+    }
+
+    // Also try no-space comparison for spaceless model output
+    const noSpaceText = normText.replace(/ /g, "");
+    const noSpaceVerse = verseWords.join("");
+    if (noSpaceText.length >= 5 && noSpaceText.length < noSpaceVerse.length * 0.85) {
+      const frag = fragmentScore(noSpaceText, noSpaceVerse);
+      bestScore = Math.max(bestScore, frag);
+    }
+
+    return bestScore;
+  }
+
   private static _suffixPrefixScore(text: string, verseText: string): number {
     const wordsT = text.split(" ");
     const wordsV = verseText.split(" ");
@@ -266,6 +301,11 @@ export class QuranDB {
       raw = Math.max(raw, spacedRatio);
       if (v.text_norm_no_bsm) {
         raw = Math.max(raw, ratio(normText, v.text_norm_no_bsm));
+      }
+      // Mid-ayah sliding window: catches partial/mid-verse transcripts
+      if (v.text_words && v.text_words.length >= 5 && noSpaceText.length < v.text_norm_ns!.length * 0.8) {
+        const swScore = QuranDB._slidingWordWindowScore(normText, v.text_words);
+        raw = Math.max(raw, swScore * 0.92); // slight discount vs full-verse match
       }
       const bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
       if (bonus > 0) {
@@ -402,6 +442,11 @@ export class QuranDB {
       raw = Math.max(raw, spacedRatio);
       if (v.text_norm_no_bsm) {
         raw = Math.max(raw, ratio(normText, v.text_norm_no_bsm));
+      }
+      // Mid-ayah sliding window: catches partial/mid-verse transcripts
+      if (v.text_words && v.text_words.length >= 5 && noSpaceText.length < v.text_norm_ns!.length * 0.8) {
+        const swScore = QuranDB._slidingWordWindowScore(normText, v.text_words);
+        raw = Math.max(raw, swScore * 0.92);
       }
       const bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
       if (bonus > 0) {

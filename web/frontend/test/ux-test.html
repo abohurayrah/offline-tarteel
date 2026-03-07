@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UX Test Suite</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, monospace; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+    h1 { color: #C2A05B; margin-bottom: 4px; font-size: 18px; }
+    .subtitle { color: #888; margin-bottom: 20px; font-size: 13px; }
+    #controls { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+    button { background: #2a2a4a; color: #C2A05B; border: 1px solid #C2A05B33; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    button:hover { background: #3a3a5a; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    button.running { background: #C2A05B22; border-color: #C2A05B; }
+    select { background: #2a2a4a; color: #e0e0e0; border: 1px solid #444; padding: 6px 10px; border-radius: 6px; font-size: 13px; }
+    #status { padding: 10px 14px; background: #2a2a4a; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
+    #progress-bar { width: 100%; height: 6px; background: #2a2a4a; border-radius: 3px; margin-bottom: 16px; overflow: hidden; }
+    #progress-fill { height: 100%; background: #C2A05B; width: 0%; transition: width 0.3s; }
+
+    /* Summary cards */
+    #summary { margin-bottom: 16px; display: none; }
+    .summary-card { padding: 12px; border-radius: 6px; margin-bottom: 8px; }
+    .summary-card.pass { background: #1e3a1e; border: 1px solid #3a5a3a; }
+    .summary-card.fail { background: #3a1e1e; border: 1px solid #5a3a3a; }
+    .summary-card.warn { background: #3a3a1e; border: 1px solid #5a5a3a; }
+    .summary-card h3 { font-size: 14px; margin-bottom: 6px; }
+    .summary-card.pass h3 { color: #7a9a5a; }
+    .summary-card.fail h3 { color: #D64545; }
+    .summary-card.warn h3 { color: #C2A05B; }
+    .criteria { font-size: 12px; margin: 2px 0; }
+    .criteria.pass { color: #7a9a5a; }
+    .criteria.fail { color: #D64545; }
+    .criteria.warn { color: #C2A05B; }
+
+    /* Timeline visualization */
+    .timeline { margin: 8px 0; padding: 8px; background: #0d0d1a; border-radius: 4px; overflow-x: auto; }
+    .timeline-row { display: flex; align-items: center; gap: 4px; margin: 2px 0; min-height: 20px; }
+    .timeline-label { font-size: 10px; color: #888; width: 90px; flex-shrink: 0; text-align: right; padding-right: 6px; }
+    .timeline-events { display: flex; gap: 2px; flex-wrap: wrap; }
+    .tl-event { font-size: 10px; padding: 1px 4px; border-radius: 3px; white-space: nowrap; }
+    .tl-match { background: #2a4a2a; color: #7a9a5a; }
+    .tl-match.wrong { background: #4a2a2a; color: #D64545; }
+    .tl-word { background: #2a2a4a; color: #7ec8e3; }
+    .tl-word.regress { background: #4a3a1a; color: #C2A05B; }
+    .tl-raw { background: #1a1a3a; color: #888; }
+    .tl-bounce { background: #4a2a2a; color: #ff6b6b; font-weight: bold; }
+
+    #log { background: #0d0d1a; border-radius: 6px; padding: 12px; max-height: 600px; overflow-y: auto; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+    .log-pass { color: #7a9a5a; }
+    .log-fail { color: #D64545; }
+    .log-warn { color: #C2A05B; }
+    .log-info { color: #7ec8e3; }
+    .log-dim { color: #555; }
+    .log-header { color: #C2A05B; font-weight: bold; font-size: 13px; border-bottom: 1px solid #333; padding-bottom: 4px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>UX Test Suite</h1>
+  <p class="subtitle">Simulates real user reading experiences — word progression, verse oscillation, mid-ayah starts</p>
+
+  <div id="controls">
+    <button id="btn-run-all">Run All Tests</button>
+    <button id="btn-run-selected">Run Selected</button>
+    <select id="scenario-select">
+      <option value="all">All Tests</option>
+      <option value="mid-start">Mid-Ayah Start (18:13)</option>
+      <option value="word-progression">Word Progression (1:1-3)</option>
+      <option value="verse-oscillation">Verse Oscillation (18:13+14)</option>
+      <option value="smooth-sequential">Smooth Sequential (112)</option>
+      <option value="long-verse-tracking">Long Verse Tracking (2:255)</option>
+      <option value="verse-complete">Verse Complete Detection (112)</option>
+      <option value="mid-page-start">Mid-Page Start (18:10)</option>
+      <option value="continuation-after-pause">Continuation After Pause</option>
+    </select>
+    <button id="btn-stop">Stop</button>
+  </div>
+
+  <div id="status">Idle — model not loaded</div>
+  <div id="progress-bar"><div id="progress-fill"></div></div>
+  <div id="summary"></div>
+  <div id="log"></div>
+
+  <script type="module" src="./ux-test.ts"></script>
+</body>
+</html>
