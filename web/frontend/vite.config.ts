@@ -6,7 +6,7 @@ export default defineConfig({
     format: "es",
   },
   optimizeDeps: {
-    exclude: ["onnxruntime-web"],
+    exclude: ["@huggingface/transformers", "onnxruntime-web"],
   },
   server: {
     headers: {
