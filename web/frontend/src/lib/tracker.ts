@@ -1,6 +1,5 @@
 import { ratio as levRatio } from "./levenshtein";
 import { QuranDB, partialRatio, normalizeArabic } from "./quran-db";
-// import { computeCorrection } from "./correction"; // TODO: rework for Arabic BPE
 import type { QuranVerse, WorkerOutbound, SurroundingVerse, CandidateVerse } from "./types";
 import {
   TRIGGER_SAMPLES,
@@ -116,6 +115,10 @@ export class RecitationTracker {
   private silenceSamples = 0;
   private staleCycles = 0;
 
+  // Ambiguity guard deferral tracking
+  private lastDeferredRef: string | null = null;
+  private consecutiveDeferrals = 0;
+
   private db: QuranDB;
   private transcribe: TranscribeFn;
 
@@ -198,7 +201,7 @@ export class RecitationTracker {
     );
 
     // Fallback: character-level progress when word alignment fails
-    // (model often outputs spaceless phoneme strings)
+    // (model sometimes outputs spaceless strings)
     // Only for verses with 10+ words where word-level alignment is unreliable
     if (matchedIndices.length === 0 && text.length >= 5 && this.trackingVerseWords.length >= 10) {
       const charWordIdx = this._charLevelProgress(text);
@@ -273,8 +276,6 @@ export class RecitationTracker {
         matched_indices: matchedIndices,
       });
 
-      // TODO: Word-level corrections need reworking for Arabic BPE model
-      // (was designed for phoneme-level alignment)
     }
 
     // Check if verse is complete
@@ -443,17 +444,40 @@ export class RecitationTracker {
               if (w1[i] === w2[i]) sharedPrefix++;
               else break;
             }
-            // Require longer shared prefix (8+ words) and very short text
-            if (sharedPrefix >= 8) {
-              const textWords = text.split(" ").length;
-              if (textWords <= sharedPrefix + 2) {
-                messages.push({
-                  type: "raw_transcript",
-                  text,
-                  confidence:
-                    Math.round(match.score * 100) / 100,
-                });
-                return messages;
+            // Adaptive guard: for short transcripts (≤6 words, typical
+            // bismillah + 0-2 words), use sharedPrefix threshold of 4;
+            // for longer transcripts, keep the original threshold of 8.
+            const textWords = text.split(" ").length;
+            const minSharedPrefix = textWords <= 6 ? 4 : 8;
+            if (sharedPrefix >= minSharedPrefix) {
+              // Only defer if match isn't a near-perfect hit.
+              // e.g. 1:1 IS just bismillah → scores ~1.0 → allow through.
+              // 114:1 at T=2s with only bismillah heard → scores ~0.95 → defer.
+              if (textWords <= sharedPrefix + 2 && match.score < 0.98) {
+                const deferKey = `${match.surah}:${match.ayah}`;
+                if (this.lastDeferredRef === deferKey) {
+                  this.consecutiveDeferrals++;
+                } else {
+                  this.consecutiveDeferrals = 1;
+                  this.lastDeferredRef = deferKey;
+                }
+
+                // Force emit after 2 consecutive deferrals of the same verse
+                // (4+ seconds of audio) — prevents indefinite blocking in
+                // sequential/concatenated mode where mixed audio always
+                // produces scores < 0.98.
+                if (this.consecutiveDeferrals <= 2) {
+                  messages.push({
+                    type: "raw_transcript",
+                    text,
+                    confidence:
+                      Math.round(match.score * 100) / 100,
+                  });
+                  return messages;
+                }
+                // Past deferral limit — fall through to emit verse_match
+                this.consecutiveDeferrals = 0;
+                this.lastDeferredRef = null;
               }
             }
           }
@@ -488,6 +512,8 @@ export class RecitationTracker {
 
       this.hasEverMatched = true;
       this.cyclesSinceEmit = 0;
+      this.consecutiveDeferrals = 0;
+      this.lastDeferredRef = null;
 
       // For multi-verse spans, advance hint to the last verse
       const ayahEnd = match.ayah_end;

@@ -42,7 +42,6 @@ EXPERIMENT_REGISTRY = {
     "fastconformer-ctc-rescore": EXPERIMENTS_DIR / "fastconformer-ctc-rescore" / "run.py",
     "fastconformer-nbest-bruteforce": EXPERIMENTS_DIR / "fastconformer-nbest-bruteforce" / "run.py",
     "contrastive-v2": EXPERIMENTS_DIR / "contrastive-v2" / "run.py",
-    "fastconformer-phoneme": EXPERIMENTS_DIR / "fastconformer-phoneme" / "run.py",
 }
 
 NEW_MODELS_PATH = EXPERIMENTS_DIR / "new-models" / "run.py"
