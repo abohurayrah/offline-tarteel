@@ -40,6 +40,21 @@ export interface RawTranscriptMessage {
   confidence: number;
 }
 
+export interface CandidateVerse {
+  surah: number;
+  ayah: number;
+  score: number;
+  surah_name: string;
+  surah_name_en: string;
+  text_preview: string;
+}
+
+export interface CandidateListMessage {
+  type: "candidate_list";
+  candidates: CandidateVerse[];
+  transcript: string;
+}
+
 export interface SurroundingVerse {
   surah: number;
   ayah: number;
@@ -62,7 +77,8 @@ export type WorkerOutbound =
   | VerseMatchMessage
   | WordProgressMessage
   | WordCorrectionMessage
-  | RawTranscriptMessage;
+  | RawTranscriptMessage
+  | CandidateListMessage;
 
 // ---------------------------------------------------------------------------
 // Quran data (from quran.json)

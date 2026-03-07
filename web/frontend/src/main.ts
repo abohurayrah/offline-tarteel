@@ -10,6 +10,7 @@ import type {
   RawTranscriptMessage,
   WordProgressMessage,
   WordCorrectionMessage,
+  CandidateListMessage,
   WorkerOutbound,
   QuranVerse,
 } from "./lib/types";
@@ -66,6 +67,7 @@ const state = {
   lastDiagnosticSentAt: 0,
   recentVerseMatches: [] as { surah: number; ayah: number; timestamp: number }[],
   practiceMode: false,
+  narrowingMode: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -88,6 +90,8 @@ const $btnStop = document.getElementById("btn-stop")!;
 const $btnReport = document.getElementById("btn-report")!;
 const $btnRestart = document.getElementById("btn-restart")!;
 const $btnPractice = document.getElementById("btn-practice")!;
+const $btnNarrowing = document.getElementById("btn-narrowing")!;
+const $candidateList = document.getElementById("candidate-list")!;
 const $app = document.getElementById("app")!;
 
 // ---------------------------------------------------------------------------
@@ -441,6 +445,69 @@ function handleRawTranscript(msg: RawTranscriptMessage): void {
 }
 
 // ---------------------------------------------------------------------------
+// Live narrowing (candidate list)
+// ---------------------------------------------------------------------------
+function handleCandidateList(msg: CandidateListMessage): void {
+  if (!state.narrowingMode) return;
+
+  const container = $candidateList;
+  container.innerHTML = "";
+
+  if (msg.candidates.length === 0) {
+    container.classList.remove("visible");
+    return;
+  }
+
+  // Show top score for reference
+  const topScore = msg.candidates[0].score;
+
+  for (const c of msg.candidates) {
+    const item = document.createElement("div");
+    item.className = "candidate-item";
+
+    // Highlight confidence relative to top
+    const relScore = topScore > 0 ? c.score / topScore : 0;
+    if (relScore >= 0.97) {
+      item.classList.add("candidate--top");
+    } else if (relScore >= 0.85) {
+      item.classList.add("candidate--likely");
+    }
+
+    const pct = Math.round(c.score * 100);
+    const bar = document.createElement("div");
+    bar.className = "candidate-bar";
+    bar.style.width = `${pct}%`;
+    item.appendChild(bar);
+
+    const info = document.createElement("div");
+    info.className = "candidate-info";
+
+    const label = document.createElement("span");
+    label.className = "candidate-label";
+    label.textContent = `${c.surah_name_en} ${c.surah}:${c.ayah}`;
+
+    const score = document.createElement("span");
+    score.className = "candidate-score";
+    score.textContent = `${pct}%`;
+
+    info.appendChild(label);
+    info.appendChild(score);
+    item.appendChild(info);
+
+    const preview = document.createElement("div");
+    preview.className = "candidate-preview";
+    preview.dir = "rtl";
+    preview.lang = "ar";
+    preview.textContent = c.text_preview;
+    item.appendChild(preview);
+
+    container.appendChild(item);
+  }
+
+  container.classList.add("visible");
+}
+
+// ---------------------------------------------------------------------------
 // Diagnostics
 // ---------------------------------------------------------------------------
 function pushDiagnosticEvent(type: string, data: Record<string, unknown>): void {
@@ -567,7 +634,12 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
     state.modelReady = true;
     $loadingStatus.hidden = true;
     $readyState.hidden = false;
+  } else if (msg.type === "candidate_list") {
+    handleCandidateList(msg);
   } else if (msg.type === "verse_match") {
+    // Hide candidates once a verse is confirmed
+    $candidateList.innerHTML = "";
+    $candidateList.classList.remove("visible");
     pushDiagnosticEvent("verse_match", {
       surah: msg.surah, ayah: msg.ayah, confidence: msg.confidence,
     });
@@ -702,6 +774,16 @@ document.addEventListener("DOMContentLoaded", () => {
     $app.classList.toggle("practice-mode", state.practiceMode);
   });
 
+  // Narrowing mode toggle
+  $btnNarrowing.addEventListener("click", () => {
+    state.narrowingMode = !state.narrowingMode;
+    $btnNarrowing.classList.toggle("active", state.narrowingMode);
+    if (!state.narrowingMode) {
+      $candidateList.innerHTML = "";
+      $candidateList.classList.remove("visible");
+    }
+  });
+
   // Button handlers
   $btnStart.addEventListener("click", async () => {
     // Hide button + subtitle, keep mushaf frame visible
@@ -711,6 +793,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     $recordingState.hidden = false;
     $btnPractice.hidden = false;
+    $btnNarrowing.hidden = false;
     state.sessionAudioChunks = [];
     state.lastModelPrediction = null;
     state.hasFirstMatch = false;
@@ -732,9 +815,14 @@ document.addEventListener("DOMContentLoaded", () => {
     if (mc) mc.hidden = false;
     $recordingState.hidden = true;
     $btnPractice.hidden = true;
+    $btnNarrowing.hidden = true;
     $postRecording.hidden = false;
     state.practiceMode = false;
+    state.narrowingMode = false;
     $app.classList.remove("practice-mode");
+    $btnNarrowing.classList.remove("active");
+    $candidateList.innerHTML = "";
+    $candidateList.classList.remove("visible");
   });
 
   $btnRestart.addEventListener("click", () => {
@@ -747,7 +835,11 @@ document.addEventListener("DOMContentLoaded", () => {
     $rawTranscript.classList.remove("visible");
     $postRecording.hidden = true;
     state.practiceMode = false;
+    state.narrowingMode = false;
     $app.classList.remove("practice-mode");
+    $btnNarrowing.classList.remove("active");
+    $candidateList.innerHTML = "";
+    $candidateList.classList.remove("visible");
 
     // Re-trigger SVG draw animations by cloning the frame
     const oldFrame = $readyState.querySelector(".mushaf-frame")!;

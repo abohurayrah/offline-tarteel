@@ -1,7 +1,7 @@
 import { ratio as levRatio } from "./levenshtein";
 import { QuranDB, partialRatio, normalizeArabic } from "./quran-db";
 // import { computeCorrection } from "./correction"; // TODO: rework for Arabic BPE
-import type { QuranVerse, WorkerOutbound, SurroundingVerse } from "./types";
+import type { QuranVerse, WorkerOutbound, SurroundingVerse, CandidateVerse } from "./types";
 import {
   TRIGGER_SAMPLES,
   MAX_WINDOW_SAMPLES,
@@ -356,6 +356,7 @@ export class RecitationTracker {
     }
 
     // Match against QuranDB — use narrow matching if we have recent context
+    // Always request top-K candidates for live narrowing UI
     let match: Record<string, any> | null;
     if (this.lastEmittedRef && this.cyclesSinceEmit <= 3) {
       match = this.db.matchVerseNarrow(
@@ -370,8 +371,30 @@ export class RecitationTracker {
         RAW_TRANSCRIPT_THRESHOLD,
         4,
         this.lastEmittedRef,
-        5,
+        10,
       );
+    }
+
+    // Emit candidate list for live narrowing UI
+    if (match?.runners_up?.length) {
+      const candidates: CandidateVerse[] = match.runners_up
+        .filter((ru: any) => ru.score >= 0.15)
+        .slice(0, 10)
+        .map((ru: any) => ({
+          surah: ru.surah,
+          ayah: ru.ayah,
+          score: ru.score,
+          surah_name: ru.surah_name ?? "",
+          surah_name_en: ru.surah_name_en ?? "",
+          text_preview: ru.text_uthmani ?? ru.text_norm ?? "",
+        }));
+      if (candidates.length > 0) {
+        messages.push({
+          type: "candidate_list",
+          candidates,
+          transcript: text,
+        });
+      }
     }
 
     // Anti-cascade: shortly after an emit, require higher threshold for
