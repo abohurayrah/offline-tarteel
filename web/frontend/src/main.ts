@@ -15,6 +15,14 @@ import type {
   QuranVerse,
 } from "./lib/types";
 
+import type { MushafPageData } from "./lib/mushaf-renderer";
+import {
+  renderPage as renderMushafPage,
+  highlightWord as mushafHighlightWord,
+  revealAll as mushafRevealAll,
+  hideUnrevealed as mushafHideUnrevealed,
+} from "./lib/mushaf-renderer";
+
 // ---------------------------------------------------------------------------
 // Types (UI-only)
 // ---------------------------------------------------------------------------
@@ -68,6 +76,12 @@ const state = {
   recentVerseMatches: [] as { surah: number; ayah: number; timestamp: number }[],
   practiceMode: false,
   narrowingMode: false,
+  // Mushaf page mode
+  mushafPages: null as MushafPageData[] | null,
+  verseToPage: null as Record<string, number> | null,
+  currentMushafPage: 1,
+  revealedVerses: new Set<string>(),
+  mushafDataReady: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -77,13 +91,10 @@ const $verses = document.getElementById("verses")!;
 const $rawTranscript = document.getElementById("raw-transcript")!;
 const $indicator = document.getElementById("listening-indicator")!;
 const $permissionPrompt = document.getElementById("permission-prompt")!;
-const $listeningStatus = document.getElementById("listening-status")!;
 const $modelStatus = document.getElementById("model-status")!;
 const $loadingStatus = document.getElementById("loading-status")!;
 const $loadingProgress = document.getElementById("loading-progress")!;
 const $loadingDetail = document.getElementById("loading-detail")!;
-const $readyState = document.getElementById("ready-state")!;
-const $recordingState = document.getElementById("recording-state")!;
 const $postRecording = document.getElementById("post-recording")!;
 const $btnStart = document.getElementById("btn-start")!;
 const $btnStop = document.getElementById("btn-stop")!;
@@ -93,6 +104,12 @@ const $btnPractice = document.getElementById("btn-practice")!;
 const $btnNarrowing = document.getElementById("btn-narrowing")!;
 const $candidateList = document.getElementById("candidate-list")!;
 const $app = document.getElementById("app")!;
+// Mushaf page mode
+const $mushafContainer = document.getElementById("mushaf-container")!;
+const $mushafPage = document.getElementById("mushaf-page")!;
+const $btnPagePrev = document.getElementById("btn-page-prev")!;
+const $btnPageNext = document.getElementById("btn-page-next")!;
+const $pageInfo = document.getElementById("page-info")!;
 
 // ---------------------------------------------------------------------------
 // Arabic numeral converter
@@ -134,6 +151,78 @@ async function fetchSurah(surahNum: number): Promise<SurahData> {
   };
   state.surahCache.set(surahNum, data);
   return data;
+}
+
+// ---------------------------------------------------------------------------
+// Mushaf page mode
+// ---------------------------------------------------------------------------
+async function loadMushafData(): Promise<void> {
+  if (state.mushafDataReady) return;
+  const [pagesRes, vtpRes] = await Promise.all([
+    fetch("/mushaf-pages.json"),
+    fetch("/verse-to-page.json"),
+  ]);
+  state.mushafPages = await pagesRes.json();
+  state.verseToPage = await vtpRes.json();
+  state.mushafDataReady = true;
+}
+
+function getPageForVerse(surah: number, ayah: number): number | null {
+  if (!state.verseToPage) return null;
+  return state.verseToPage[`${surah}:${ayah}`] ?? null;
+}
+
+async function navigateToMushafPage(pageNum: number): Promise<void> {
+  if (!state.mushafPages || pageNum < 1 || pageNum > 604) return;
+  if (pageNum === state.currentMushafPage && $mushafPage.children.length > 0) return;
+
+  state.currentMushafPage = pageNum;
+  $pageInfo.textContent = `${pageNum} / 604`;
+  ($btnPagePrev as HTMLButtonElement).disabled = pageNum >= 604;
+  ($btnPageNext as HTMLButtonElement).disabled = pageNum <= 1;
+
+  // Transition: fade out, render, fade in
+  $mushafPage.classList.add("mushaf-page--exit");
+  await new Promise((r) => setTimeout(r, 150));
+
+  const page = state.mushafPages[pageNum - 1];
+  await renderMushafPage($mushafPage, page, state.revealedVerses, state.practiceMode);
+  $mushafPage.classList.remove("mushaf-page--exit");
+  $mushafPage.classList.add("mushaf-page--enter");
+  setTimeout(() => $mushafPage.classList.remove("mushaf-page--enter"), 350);
+}
+
+// Handle verse match in mushaf mode — only navigate, don't reveal
+async function handleMushafVerseMatch(msg: VerseMatchMessage): Promise<void> {
+  state.lastModelPrediction = { surah: msg.surah, ayah: msg.ayah, confidence: msg.confidence };
+
+  if (!state.hasFirstMatch) {
+    state.hasFirstMatch = true;
+    $indicator.classList.add("has-verses");
+  }
+
+  const targetPage = getPageForVerse(msg.surah, msg.ayah);
+  if (!targetPage) return;
+
+  // Auto-navigate to the correct page
+  if (targetPage !== state.currentMushafPage) {
+    await navigateToMushafPage(targetPage);
+  }
+  // Word-by-word reveal is handled by handleMushafWordProgress
+}
+
+// Handle word progress in mushaf mode — reveal words one at a time
+function handleMushafWordProgress(msg: WordProgressMessage): void {
+  const targetPage = getPageForVerse(msg.surah, msg.ayah);
+  if (!targetPage || targetPage !== state.currentMushafPage) return;
+
+  // Highlight only the matched words (word-by-word reveal)
+  mushafHighlightWord($mushafPage, msg.surah, msg.ayah, msg.matched_indices);
+
+  // Mark verse as revealed only when ALL words are matched
+  if (msg.matched_indices.length >= msg.total_words) {
+    state.revealedVerses.add(`${msg.surah}:${msg.ayah}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -323,19 +412,7 @@ async function handleVerseMatch(msg: VerseMatchMessage): Promise<void> {
 
   if (!state.hasFirstMatch) {
     state.hasFirstMatch = true;
-    $listeningStatus.hidden = true;
     $indicator.classList.add("has-verses");
-
-    // Break apart the mushaf frame, then hide it
-    if (!$readyState.hidden) {
-      $readyState.classList.add("ready-breaking");
-      setTimeout(() => {
-        $readyState.hidden = true;
-        $readyState.classList.remove("ready-breaking", "ready-listening");
-        const mc = $readyState.querySelector<HTMLElement>(".mushaf-content");
-        if (mc) mc.hidden = false;
-      }, 700);
-    }
   }
 
   const lastGroup = state.groups[state.groups.length - 1];
@@ -633,7 +710,13 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
     $modelStatus.classList.add("ready");
     state.modelReady = true;
     $loadingStatus.hidden = true;
-    $readyState.hidden = false;
+    // Show mushaf directly — no "Begin" screen
+    if (state.mushafDataReady) {
+      $mushafContainer.hidden = false;
+      $verses.hidden = true;
+      state.currentMushafPage = 0; // force re-render
+      navigateToMushafPage(1);
+    }
   } else if (msg.type === "candidate_list") {
     handleCandidateList(msg);
   } else if (msg.type === "verse_match") {
@@ -644,13 +727,23 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
       surah: msg.surah, ayah: msg.ayah, confidence: msg.confidence,
     });
     checkAnomalyAndSend(msg);
-    handleVerseMatch(msg);
+    // Route to mushaf mode or flowing mode
+    if (state.mushafDataReady) {
+      handleMushafVerseMatch(msg);
+    } else {
+      handleVerseMatch(msg);
+    }
   } else if (msg.type === "word_progress") {
     pushDiagnosticEvent("word_progress", {
       surah: msg.surah, ayah: msg.ayah,
       word_index: msg.word_index, total_words: msg.total_words,
     });
-    handleWordProgress(msg);
+    // Route to mushaf mode or flowing mode
+    if (state.mushafDataReady) {
+      handleMushafWordProgress(msg);
+    } else {
+      handleWordProgress(msg);
+    }
   } else if (msg.type === "word_correction") {
     handleWordCorrection(msg);
   } else if (msg.type === "raw_transcript") {
@@ -768,10 +861,55 @@ document.addEventListener("DOMContentLoaded", () => {
   // Initialize worker (loads model, vocab, quranDB)
   worker.postMessage({ type: "init" });
 
-  // Practice mode toggle
+  // Load mushaf layout data in background
+  loadMushafData()
+    .then(() => {
+      // If model was already ready before mushaf data loaded, show mushaf now
+      if (state.modelReady && $mushafContainer.hidden) {
+        $mushafContainer.hidden = false;
+        $verses.hidden = true;
+        state.currentMushafPage = 0;
+        navigateToMushafPage(1);
+      }
+    })
+    .catch((err) =>
+      console.warn("Mushaf data not available, using flowing mode:", err),
+    );
+
+  // Practice mode toggle (applies to both mushaf and flowing)
   $btnPractice.addEventListener("click", () => {
     state.practiceMode = !state.practiceMode;
     $app.classList.toggle("practice-mode", state.practiceMode);
+    // Update mushaf page if in mushaf mode
+    if (state.mushafDataReady && !$mushafContainer.hidden) {
+      if (state.practiceMode) {
+        mushafHideUnrevealed($mushafPage, state.revealedVerses);
+      } else {
+        mushafRevealAll($mushafPage);
+      }
+    }
+  });
+
+  // Mushaf page navigation
+  $btnPagePrev.addEventListener("click", () => {
+    if (state.currentMushafPage < 604) {
+      navigateToMushafPage(state.currentMushafPage + 1);
+    }
+  });
+  $btnPageNext.addEventListener("click", () => {
+    if (state.currentMushafPage > 1) {
+      navigateToMushafPage(state.currentMushafPage - 1);
+    }
+  });
+
+  // Keyboard navigation for mushaf pages
+  document.addEventListener("keydown", (e) => {
+    if ($mushafContainer.hidden) return;
+    if (e.key === "ArrowRight" && state.currentMushafPage < 604) {
+      navigateToMushafPage(state.currentMushafPage + 1);
+    } else if (e.key === "ArrowLeft" && state.currentMushafPage > 1) {
+      navigateToMushafPage(state.currentMushafPage - 1);
+    }
   });
 
   // Narrowing mode toggle
@@ -786,36 +924,45 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Button handlers
   $btnStart.addEventListener("click", async () => {
-    // Hide button + subtitle, keep mushaf frame visible
-    const mushafContent = $readyState.querySelector<HTMLElement>(".mushaf-content");
-    if (mushafContent) mushafContent.hidden = true;
-    $readyState.classList.add("ready-listening");
+    // Swap start → stop button
+    ($btnStart as HTMLElement).hidden = true;
+    ($btnStop as HTMLElement).hidden = false;
 
-    $recordingState.hidden = false;
-    $btnPractice.hidden = false;
-    $btnNarrowing.hidden = false;
     state.sessionAudioChunks = [];
     state.lastModelPrediction = null;
     state.hasFirstMatch = false;
     state.groups = [];
     state.diagnosticEvents = [];
     state.recentVerseMatches = [];
+    state.revealedVerses = new Set<string>();
+    state.practiceMode = true; // Default practice mode on for mushaf
+    $app.classList.add("practice-mode");
     $verses.innerHTML = "";
     $rawTranscript.textContent = "";
     $rawTranscript.classList.remove("visible");
+
+    // Show mushaf page if data is loaded
+    if (state.mushafDataReady) {
+      $mushafContainer.hidden = false;
+      $verses.hidden = true;
+      if (state.currentMushafPage < 1) {
+        state.currentMushafPage = 0;
+        await navigateToMushafPage(1);
+      } else {
+        // Re-render current page with practice mode
+        await navigateToMushafPage(state.currentMushafPage);
+      }
+    }
+
     state.worker?.postMessage({ type: "reset" });
     await startAudio();
   });
 
   $btnStop.addEventListener("click", () => {
     stopAudio();
-    $readyState.hidden = true;
-    $readyState.classList.remove("ready-breaking", "ready-listening");
-    const mc = $readyState.querySelector<HTMLElement>(".mushaf-content");
-    if (mc) mc.hidden = false;
-    $recordingState.hidden = true;
-    $btnPractice.hidden = true;
-    $btnNarrowing.hidden = true;
+    // Swap stop → start button
+    ($btnStop as HTMLElement).hidden = true;
+    ($btnStart as HTMLElement).hidden = false;
     $postRecording.hidden = false;
     state.practiceMode = false;
     state.narrowingMode = false;
@@ -830,6 +977,7 @@ document.addEventListener("DOMContentLoaded", () => {
     state.lastModelPrediction = null;
     state.hasFirstMatch = false;
     state.groups = [];
+    state.revealedVerses = new Set<string>();
     $verses.innerHTML = "";
     $rawTranscript.textContent = "";
     $rawTranscript.classList.remove("visible");
@@ -841,12 +989,13 @@ document.addEventListener("DOMContentLoaded", () => {
     $candidateList.innerHTML = "";
     $candidateList.classList.remove("visible");
 
-    // Re-trigger SVG draw animations by cloning the frame
-    const oldFrame = $readyState.querySelector(".mushaf-frame")!;
-    const newFrame = oldFrame.cloneNode(true) as HTMLElement;
-    oldFrame.parentNode!.replaceChild(newFrame, oldFrame);
-
-    $readyState.hidden = false;
+    // Show mushaf page 1
+    if (state.mushafDataReady) {
+      $mushafContainer.hidden = false;
+      $verses.hidden = true;
+      state.currentMushafPage = 0;
+      navigateToMushafPage(1);
+    }
   });
 
   $btnReport.addEventListener("click", () => {
