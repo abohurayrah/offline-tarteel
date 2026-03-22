@@ -2,18 +2,25 @@ import { ratio, fragmentScore, sellersWordMatch, phoneticRatio } from "./levensh
 import type { QuranVerse, VerseMatch, VerseMatchCandidate } from "./types";
 
 /**
- * Normalize Arabic text for comparison:
- * - Strip BPE markers, diacritics, normalize hamza/taa/yaa
+ * Normalize Arabic text for comparison.
+ *
+ * Handles the gap between Whisper ASR output (modern Arabic) and
+ * Quranic text (Uthmani-derived). Strips diacritics, normalizes
+ * hamza/taa/yaa variants, removes Quran-specific marks, and handles
+ * zero-width Unicode characters.
  */
 function normalizeArabic(text: string): string {
   text = text.replace(/\u2581/g, " ");  // BPE marker -> space
   text = text.replace(/\uFEFF/g, "");
-  text = text.replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "");
+  // Unified range U+06D6-U+06ED strips ALL Quranic annotation marks including
+  // small waw ۥ (U+06E5, ~990 verses), small yaa ۦ (U+06E6, ~833 verses),
+  // rub el hizb ۞ (U+06DE, ~199 verses), sajdah ۩ (U+06E9, ~15 verses)
+  text = text.replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g, "");
   text = text.replace(/[أإآٱ]/g, "ا");
-  text = text.replace(/ة/g, "ه");
-  text = text.replace(/ى/g, "ي");
-  text = text.replace(/ـ/g, "");
-  text = text.replace(/[،؟.!:]/g, "");
+  text = text.replace(/ة/g, "ه");    // taa marbuta → haa
+  text = text.replace(/ى/g, "ي");    // alif maqsura → yaa
+  text = text.replace(/ـ/g, "");     // tatweel
+  text = text.replace(/[،؟.!:]/g, ""); // Arabic punctuation
   text = text.replace(/\s+/g, " ").trim();
   return text;
 }
@@ -104,6 +111,7 @@ export class QuranDB {
 
   private _getCandidates(text: string, maxCandidates = 200): Set<number> {
     const noSpace = text.replace(/ /g, "");
+    const effectiveMax = noSpace.length < 15 ? Math.max(maxCandidates, 400) : maxCandidates;
     if (noSpace.length < 3) {
       return new Set(this.verses.map((_, i) => i));
     }
@@ -121,7 +129,7 @@ export class QuranDB {
     }
     const sorted = [...hits.entries()].sort((a, b) => b[1] - a[1]);
     const candidates = new Set<number>();
-    for (let i = 0; i < Math.min(sorted.length, maxCandidates); i++) {
+    for (let i = 0; i < Math.min(sorted.length, effectiveMax); i++) {
       candidates.add(sorted[i][0]);
     }
     return candidates;
@@ -217,8 +225,10 @@ export class QuranDB {
     }
 
     const phonetic = phoneticRatio(textNoSpace, verseNs);
+    const isShortText = textNoSpace.length < 20;
+    const phoneticWeight = isShortText ? 0.4 : 0.2;
     if (phonetic > baseScore) {
-      return 0.8 * baseScore + 0.2 * phonetic;
+      return (1 - phoneticWeight) * baseScore + phoneticWeight * phonetic;
     }
     return baseScore;
   }
@@ -382,6 +392,18 @@ export class QuranDB {
         const swScore = QuranDB._slidingWordWindowScore(normText, v.text_words);
         raw = Math.max(raw, swScore * 0.92); // slight discount vs full-verse match
       }
+      // First-word boost for short transcripts
+      if (textWords.length <= 4 && v.text_words && v.text_words.length > 0) {
+        const effectiveFirstWord = (v.ayah === 1 && v.surah !== 1 && v.surah !== 9 && v.text_norm_no_bsm)
+          ? v.text_norm_no_bsm.split(" ")[0]
+          : v.text_words[0];
+        if (effectiveFirstWord) {
+          const firstWordSim = ratio(textWords[0], effectiveFirstWord);
+          if (firstWordSim > 0.7) {
+            raw = Math.max(raw, raw + 0.05);
+          }
+        }
+      }
       let bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
       if (bonus > 0) {
         const sp = QuranDB._suffixPrefixScore(normText, v.text_norm!);
@@ -411,6 +433,10 @@ export class QuranDB {
     const pass2Surahs = new Set<number>();
     for (let idx = 0; idx < Math.min(scored.length, 30); idx++) {
       pass2Surahs.add(scored[idx][0].surah);
+    }
+    // Also include all surahs from trigram candidate set
+    for (const idx of candidates) {
+      pass2Surahs.add(this.verses[idx].surah);
     }
 
     const [bestV, bestRaw, bestBonus, bestScoreInit] = scored[0] ?? [null, 0, 0, 0];
@@ -476,6 +502,17 @@ export class QuranDB {
       }
     }
 
+    // Two-pass surah identification: if not confident yet, try identifying
+    // the surah first then searching within it
+    if (bestScore < 0.95) {
+      const textWords = normText.split(" ");
+      const twoPassResult = this._twoPassMatch(normText, noSpaceText, textWords, maxSpan, bonuses, surahContext);
+      if (twoPassResult && twoPassResult.score > bestScore + 0.03) {
+        bestScore = twoPassResult.score;
+        best = twoPassResult;
+      }
+    }
+
     if (bestScore >= threshold) {
       if (returnTopK > 0) {
         best.runners_up = topSingles.slice(0, returnTopK);
@@ -483,6 +520,130 @@ export class QuranDB {
       return best;
     }
     return null;
+  }
+
+  /**
+   * Two-pass surah identification method.
+   * Pass 1: scores each surah by averaging top-3 verse scores to identify most likely surah.
+   * Pass 2: searches only within the best surah for more thorough matching.
+   */
+  private _twoPassMatch(
+    normText: string,
+    noSpaceText: string,
+    textWords: string[],
+    maxSpan: number,
+    bonuses: Map<string, number>,
+    surahContext: number | null,
+  ): Record<string, any> | null {
+    // Pass 1: score each surah by its top-3 verse scores
+    const surahScores = new Map<number, number[]>();
+    const candidates = this._getCandidates(normText, 200);
+    for (const idx of candidates) {
+      const v = this.verses[idx];
+      let raw = QuranDB._smartScore(noSpaceText, v.text_norm_ns!);
+      if (v.text_norm_no_bsm_ns) {
+        raw = Math.max(raw, QuranDB._smartScore(noSpaceText, v.text_norm_no_bsm_ns));
+      }
+      const arr = surahScores.get(v.surah) ?? [];
+      arr.push(raw);
+      surahScores.set(v.surah, arr);
+    }
+
+    // Average top-3 scores per surah
+    const surahRanking: [number, number][] = [];
+    for (const [surah, scores] of surahScores) {
+      scores.sort((a, b) => b - a);
+      const top3 = scores.slice(0, 3);
+      const avg = top3.reduce((s, v) => s + v, 0) / top3.length;
+      let adjusted = avg;
+      if (surahContext !== null && surah === surahContext) {
+        adjusted += 0.06;
+      }
+      surahRanking.push([surah, adjusted]);
+    }
+    surahRanking.sort((a, b) => b[1] - a[1]);
+
+    if (surahRanking.length === 0) return null;
+
+    // Pass 2: search within top surah
+    const bestSurah = surahRanking[0][0];
+    const surahVerses = this._bySurah.get(bestSurah);
+    if (!surahVerses) return null;
+
+    let bestScore = 0;
+    let best: Record<string, any> | null = null;
+
+    // Score individual verses in the surah
+    for (const v of surahVerses) {
+      let raw = QuranDB._smartScore(noSpaceText, v.text_norm_ns!);
+      if (v.text_norm_no_bsm_ns) {
+        raw = Math.max(raw, QuranDB._smartScore(noSpaceText, v.text_norm_no_bsm_ns));
+      }
+      const spacedRatio = ratio(normText, v.text_norm!);
+      raw = Math.max(raw, spacedRatio);
+      if (v.text_norm_no_bsm) {
+        raw = Math.max(raw, ratio(normText, v.text_norm_no_bsm));
+      }
+      // First-word boost for short transcripts
+      if (textWords.length <= 4 && v.text_words && v.text_words.length > 0) {
+        const effectiveFirstWord = (v.ayah === 1 && v.surah !== 1 && v.surah !== 9 && v.text_norm_no_bsm)
+          ? v.text_norm_no_bsm.split(" ")[0]
+          : v.text_words[0];
+        if (effectiveFirstWord) {
+          const firstWordSim = ratio(textWords[0], effectiveFirstWord);
+          if (firstWordSim > 0.7) {
+            raw = Math.max(raw, raw + 0.05);
+          }
+        }
+      }
+      const bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
+      const score = Math.min(raw + bonus, 1.0);
+      if (score > bestScore) {
+        bestScore = score;
+        best = {
+          ...v,
+          score,
+          raw_score: raw,
+          bonus,
+        };
+      }
+    }
+
+    // Also try multi-ayah spans within the surah
+    for (let i = 0; i < surahVerses.length; i++) {
+      for (let span = 2; span <= maxSpan; span++) {
+        if (i + span > surahVerses.length) break;
+        const chunk = surahVerses.slice(i, i + span);
+        const firstText = chunk[0].text_norm_no_bsm ?? chunk[0].text_norm!;
+        const combined = [firstText]
+          .concat(chunk.slice(1).map((c) => c.text_norm!))
+          .join(" ");
+        const combinedNs = combined.replace(/ /g, "");
+        let raw = ratio(normText, combined);
+        raw = Math.max(raw, ratio(noSpaceText, combinedNs));
+        if (noSpaceText.length < combinedNs.length * 0.85) {
+          const frag = fragmentScore(noSpaceText, combinedNs);
+          raw = Math.max(raw, frag * 0.95);
+        }
+        const bonus = bonuses.get(`${chunk[0].surah}:${chunk[0].ayah}`) ?? 0.0;
+        const score = Math.min(raw + bonus, 1.0);
+        if (score > bestScore) {
+          bestScore = score;
+          best = {
+            surah: bestSurah,
+            ayah: chunk[0].ayah,
+            ayah_end: chunk[chunk.length - 1].ayah,
+            text: chunk.map((c) => c.text_uthmani).join(" "),
+            text_norm: combined,
+            score,
+            raw_score: raw,
+            bonus,
+          };
+        }
+      }
+    }
+
+    return best;
   }
 
   /**
@@ -565,6 +726,18 @@ export class QuranDB {
       if (v.text_words && v.text_words.length >= 5 && noSpaceText.length < v.text_norm_ns!.length * 0.8) {
         const swScore = QuranDB._slidingWordWindowScore(normText, v.text_words);
         raw = Math.max(raw, swScore * 0.92);
+      }
+      // First-word boost for short transcripts
+      if (textWords.length <= 4 && v.text_words && v.text_words.length > 0) {
+        const effectiveFirstWord = (v.ayah === 1 && v.surah !== 1 && v.surah !== 9 && v.text_norm_no_bsm)
+          ? v.text_norm_no_bsm.split(" ")[0]
+          : v.text_words[0];
+        if (effectiveFirstWord) {
+          const firstWordSim = ratio(textWords[0], effectiveFirstWord);
+          if (firstWordSim > 0.7) {
+            raw = Math.max(raw, raw + 0.05);
+          }
+        }
       }
       const bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
       if (bonus > 0) {
