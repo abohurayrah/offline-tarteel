@@ -452,7 +452,12 @@ export class RecitationTracker {
   private async _handleDiscovery(): Promise<WorkerOutbound[]> {
     const messages: WorkerOutbound[] = [];
 
-    if (this.newAudioCount < TRIGGER_SAMPLES) return messages;
+    // Adaptive trigger: first attempt after 1.2s, then standard 2s
+    // This reduces time-to-first-match without sacrificing accuracy on retries
+    const triggerThreshold = !this.hasEverMatched && this.cyclesSinceEmit === Infinity
+      ? Math.floor(SAMPLE_RATE * 1.2)
+      : TRIGGER_SAMPLES;
+    if (this.newAudioCount < triggerThreshold) return messages;
     this.newAudioCount = 0;
     this.cyclesSinceEmit++;
 
