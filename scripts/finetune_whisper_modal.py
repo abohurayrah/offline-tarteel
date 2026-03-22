@@ -1,25 +1,32 @@
 """
 Modal wrapper for Whisper Quranic Arabic fine-tuning.
 
-Runs the training script on a cloud A100-80GB GPU via Modal. Handles
-dependency installation, GPU provisioning, and artifact download.
+Runs the training script on cloud A100-80GB / H100 / H200 GPUs via Modal.
+Handles dependency installation, GPU provisioning, and artifact download.
 
 Usage:
     # Set your HuggingFace token for dataset access and model upload
     export HF_TOKEN=hf_...
 
-    # Run training on Modal (A100-80GB, ~6-8 hours for 3 epochs)
+    # Run training on Modal (1x A100-80GB, ~8-12 hours for 3 epochs)
     modal run scripts/finetune_whisper_modal.py
 
+    # Multi-GPU (4x A100-80GB, ~2-3 hours, same total cost)
+    NUM_GPUS=4 modal run scripts/finetune_whisper_modal.py
+
+    # Use H100 instead (faster single-GPU, ~$3.95/hr vs $2.50/hr)
+    GPU_TYPE=H100 modal run scripts/finetune_whisper_modal.py
+
     # Run with custom settings
-    HUB_REPO=your-name/whisper-small-quran  modal run scripts/finetune_whisper_modal.py
+    HUB_REPO=your-name/whisper-small-quran modal run scripts/finetune_whisper_modal.py
 
     # Download artifacts after training
     modal volume get whisper-quran-output /output ./local-output
 
 Prerequisites:
     pip install modal
-    modal token new  # authenticate with Modal
+    modal token new    # authenticate with Modal
+    modal secret create huggingface-secret HF_TOKEN=hf_...  # store HF token
 """
 
 from __future__ import annotations
@@ -76,16 +83,37 @@ training_image = (
 # ---------------------------------------------------------------------------
 # GPU configuration
 # ---------------------------------------------------------------------------
-# Options (set NUM_GPUS env var):
-#   1x A100-80GB: ~8-12 hours, ~$25-35   (default, most reliable)
-#   2x A100-80GB: ~4-6 hours,  ~$25-35   (same cost, 2x faster)
-#   4x A100-80GB: ~2-3 hours,  ~$25-35   (same cost, 4x faster)
-#   1x H100:      ~5-7 hours,  ~$30-40   (fastest single GPU)
+# Options (set NUM_GPUS env var, set GPU_TYPE to "H100" for H100):
+#
+# Modal pricing (as of 2026-03):
+#   A100-80GB: ~$2.50/hr/GPU    H100: ~$3.95/hr/GPU    H200: ~$4.54/hr/GPU
+#
+# Estimated cost for 3 epochs of Whisper-small LoRA fine-tuning:
+#   1x A100-80GB: ~8-12 hours, ~$20-30   (default, most reliable)
+#   2x A100-80GB: ~4-6 hours,  ~$20-30   (same cost, 2x faster)
+#   4x A100-80GB: ~2-3 hours,  ~$20-30   (same cost, 4x faster)
+#   1x H100:      ~5-7 hours,  ~$20-28   (faster per GPU, good single-GPU option)
+#   1x H200:      ~4-6 hours,  ~$18-27   (fastest single GPU)
 #
 # Multi-GPU uses accelerate's data-parallel training automatically.
 # Total cost is similar because you rent more GPUs for less time.
+# A100-80GB supports up to 8 GPUs per node on Modal.
 
 NUM_GPUS: int = int(os.environ.get("NUM_GPUS", "1"))
+GPU_TYPE: str = os.environ.get("GPU_TYPE", "A100-80GB")
+
+def _gpu_spec() -> str:
+    """Build the Modal GPU spec string.
+
+    Modal's current API uses string specs: "A100-80GB", "H100:4", etc.
+    The class-based API (modal.gpu.A100(...)) is deprecated.
+    """
+    gpu = GPU_TYPE
+    if gpu not in ("A100-80GB", "A100-40GB", "H100", "H200", "L40S"):
+        raise ValueError(f"Unsupported GPU_TYPE={gpu}. Use A100-80GB, H100, or H200.")
+    if NUM_GPUS > 1:
+        return f"{gpu}:{NUM_GPUS}"
+    return gpu
 
 
 # ---------------------------------------------------------------------------
@@ -94,12 +122,11 @@ NUM_GPUS: int = int(os.environ.get("NUM_GPUS", "1"))
 
 @app.function(
     image=training_image,
-    gpu=modal.gpu.A100(size="80GB", count=NUM_GPUS),
+    gpu=_gpu_spec(),
     volumes={"/output": output_volume},
     timeout=12 * 60 * 60,  # 12 hours max
-    memory=65536 * max(1, NUM_GPUS),  # Scale RAM with GPUs
     secrets=[
-        modal.Secret.from_name("huggingface-secret", required=False),
+        modal.Secret.from_name("huggingface-secret"),
     ],
 )
 def train():
@@ -135,9 +162,9 @@ def train():
         env["GRAD_ACCUM"] = str(max(1, base_accum // NUM_GPUS))
 
     print("=" * 60)
-    print(f"Starting Whisper Quranic fine-tuning on Modal {NUM_GPUS}x A100-80GB")
+    print(f"Starting Whisper Quranic fine-tuning on Modal {NUM_GPUS}x {GPU_TYPE}")
     print("=" * 60)
-    print(f"  GPUs:        {NUM_GPUS}x A100-80GB")
+    print(f"  GPUs:        {NUM_GPUS}x {GPU_TYPE}")
     print(f"  Output dir:  /output/whisper-small-quran")
     print(f"  HF Token:    {'set' if hf_token else 'not set'}")
     print(f"  Hub repo:    {env.get('HUB_REPO', 'tarteel-ai/whisper-small-quran-lora')}")
@@ -147,11 +174,15 @@ def train():
         print(f"  Effective:   {int(env.get('BATCH_SIZE','4')) * NUM_GPUS * int(env.get('GRAD_ACCUM','1'))}")
     print()
 
-    # For multi-GPU: use accelerate to launch distributed training
+    # For multi-GPU: use accelerate to launch distributed training.
+    # Modal provisions all GPUs on a single node, so we use single-machine
+    # multi-GPU mode. accelerate handles DistributedDataParallel automatically.
     if NUM_GPUS > 1:
         cmd = [
             sys.executable, "-m", "accelerate", "launch",
+            "--multi_gpu",
             "--num_processes", str(NUM_GPUS),
+            "--num_machines", "1",
             "--mixed_precision", "fp16",
             "/app/finetune_whisper_quran.py",
         ]
@@ -280,12 +311,12 @@ def main(
         list_artifacts.remote()
         return
 
-    print(f"Launching training on Modal {NUM_GPUS}x A100-80GB...")
+    print(f"Launching training on Modal {NUM_GPUS}x {GPU_TYPE}...")
     if NUM_GPUS == 1:
-        print("Estimated: 8-12 hours for 3 epochs. ~$25-35.")
+        print("Estimated: 8-12 hours for 3 epochs. ~$20-30.")
         print("Tip: NUM_GPUS=4 modal run ... for 2-3 hours at same cost.")
     else:
-        print(f"Estimated: {max(2, 10 // NUM_GPUS)}-{max(3, 12 // NUM_GPUS)} hours for 3 epochs. ~$25-35.")
+        print(f"Estimated: {max(2, 10 // NUM_GPUS)}-{max(3, 12 // NUM_GPUS)} hours for 3 epochs. ~$20-30.")
     print()
 
     # Run training
