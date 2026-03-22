@@ -1377,6 +1377,28 @@ Whisper-tiny remains the better model for this use case.
 Downloaded 256 Tarteel user recordings from HuggingFace (ashraf-ali/quran-data).
 32 surahs covered, 224 unique verse combinations. Manifest at `benchmark/test_corpus_expanded/manifest.json`.
 
+#### Additional Improvements (Session 1 continued)
+- [x] Whisper output cleanup: repetition loop detection (collapses 3+ repeated words/phrases)
+- [x] Extracted `cleanWhisperOutput` to shared `src/lib/text-cleanup.ts` with 12 tests
+- [x] Adaptive discovery trigger: 1.2s for first match (instead of 2.0s), ~800ms faster
+- [x] Production Vite build verified working
+
+#### Remaining Failures Analysis (10 samples)
+- **ref_001002** (1:2): Perfect transcript, wrong verse (37:182 has same text + leading "و"). Root cause: العالمين (Whisper output) vs العلمين (Uthmani text). Normalizer fix needed.
+- **retasy_025** (1:7): 67% word overlap — "الذين... الاتالين" is garbled "الذين... الضالين". Potentially recoverable.
+- **8 other RetaSy**: <50% word overlap — Whisper output is too garbled to match. Only a better ASR model can fix these.
+
+#### Key Finding: whisper-base-ar-quran WORSE than tiny
+- Exported to ONNX (79MB encoder + 300MB decoder)
+- Benchmarked: 56.6% accuracy (vs 69.8% for tiny)
+- Severe repetition/looping on short and noisy audio
+- Not suitable for upgrade — tiny is more robust
+
+#### Commits pushed to fork/feat/quality-improvements:
+1. `bed29b0` — Main quality improvements (69.8% → 81.1%)
+2. `8eedc1e` — Whisper output cleanup + adaptive trigger
+3. `c52a2a7` — Extract cleanWhisperOutput to shared module with tests
+
 #### Failure Analysis (16 failures at baseline)
 1. **Ya-Sin 36:1** — FIXED: muqatta'at handling now matches isolated letters
 2. **RetaSy Al-Fatiha** (5 failures) — Partially fixed: phonetic + first-word boosting helps some
