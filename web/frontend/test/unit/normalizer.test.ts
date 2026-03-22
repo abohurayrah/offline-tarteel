@@ -197,4 +197,46 @@ describe("normalizeArabic (quran-db version)", () => {
     const result = normalizeArabic(input);
     expect(result).toBe("وقف");
   });
+
+  // --- Uthmani script annotation marks ---
+  // TODO: Extending the diacritics range to strip small waw/yaa/rub-el-hizb/sajdah
+  // changes normalization for ~30% of verses, which invalidates scoring calibration.
+  // These need to be re-enabled after re-tuning thresholds and bonuses.
+
+  it("strips Arabic small waw (U+06E5) — pronominal suffix marker in text_clean", () => {
+    // text_clean writes حَوْلَهُۥ with U+06E5 (ARABIC SMALL WAW) to mark the waw suffix.
+    // Whisper outputs the bare stem حوله.  Stripping U+06E5 closes that 1-char gap.
+    // This appeared in ~990 Quran verses in text_clean.
+    expect(normalizeArabic("حولهۥ")).toBe("حوله");
+    expect(normalizeArabic("ربهۥ")).toBe("ربه");
+  });
+
+  it("strips Arabic small yeh (U+06E6) — pronominal suffix marker in text_clean", () => {
+    // Analogous to small waw: text_clean writes بهۦ / مثلهۦ with U+06E6 (ARABIC SMALL YEH).
+    // Appears in ~833 Quran verses.
+    expect(normalizeArabic("ربهۦ")).toBe("ربه");
+    expect(normalizeArabic("بهۦ")).toBe("به");
+  });
+
+  it("strips Arabic start of rub el hizb (U+06DE) — sectional marker in text_clean", () => {
+    // ۞ U+06DE marks quarter-juz sections.  Not a letter; appears in ~199 verses.
+    // It appears between words (with surrounding spaces) in text_clean, so after
+    // stripping the character the whitespace-collapse step produces a single space.
+    expect(normalizeArabic("قُلْ \u06DE هُوَ")).toBe("قل هو");
+    // Also works when the marker appears mid-word (no surrounding spaces)
+    expect(normalizeArabic("قُلْ\u06DEهُوَ")).toBe("قلهو");
+  });
+
+  it("strips Arabic place of sajdah (U+06E9) — sajda marker in text_clean", () => {
+    // ۩ U+06E9 marks prostration verses.  Not a letter; appears in ~15 verses.
+    expect(normalizeArabic("اسجد\u06E9وا")).toBe("اسجدوا");
+  });
+
+  it("normalizes word with small waw suffix to match ASR bare-stem output", () => {
+    // Full integration: normalizeArabic on the verse side and on a simulated
+    // Whisper output side must produce the same string for a perfect match.
+    const verseWord  = "حولهۥ";   // as it appears in text_clean (2:17)
+    const whisperWord = "حوله";   // as Whisper would output it
+    expect(normalizeArabic(verseWord)).toBe(normalizeArabic(whisperWord));
+  });
 });
