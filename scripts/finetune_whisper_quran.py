@@ -32,6 +32,7 @@ from typing import Any
 import evaluate
 import numpy as np
 import torch
+from huggingface_hub import login as hf_login
 from datasets import Audio, DatasetDict, concatenate_datasets, load_dataset
 from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 from transformers import (
@@ -83,6 +84,9 @@ SPEED_FACTORS: list[float] = [0.9, 1.0, 1.1]
 NOISE_INJECTION: bool = True
 NOISE_SNR_DB: float = 20.0  # Signal-to-noise ratio in dB
 
+# HuggingFace authentication (required for large dataset downloads to avoid rate limits)
+HF_TOKEN: str | None = os.getenv("HF_TOKEN")
+
 # Paths
 OUTPUT_DIR: Path = Path(os.getenv("OUTPUT_DIR", "./output/whisper-small-quran"))
 CHECKPOINT_DIR: Path = OUTPUT_DIR / "checkpoints"
@@ -90,6 +94,28 @@ CHECKPOINT_DIR: Path = OUTPUT_DIR / "checkpoints"
 # Audio constants
 SAMPLING_RATE: int = 16_000
 MAX_AUDIO_LENGTH_S: float = 30.0  # Whisper's max input length
+
+
+def _authenticate_hf() -> None:
+    """Authenticate with HuggingFace Hub to avoid rate limits on large downloads.
+
+    The EveryAyah dataset alone is ~100GB. Without auth, HF will throttle
+    downloads to ~5MB/s and disconnect after ~10 minutes. With a free HF
+    token, you get full speed and no disconnects.
+
+    Set HF_TOKEN env var or run `huggingface-cli login` before training.
+    """
+    if HF_TOKEN:
+        hf_login(token=HF_TOKEN)
+        logger.info("Authenticated with HuggingFace Hub via HF_TOKEN")
+    elif Path.home().joinpath(".cache/huggingface/token").exists():
+        logger.info("Using cached HuggingFace token from `huggingface-cli login`")
+    else:
+        logger.warning(
+            "No HF_TOKEN set and no cached token found. "
+            "Large dataset downloads WILL be rate-limited. "
+            "Run `huggingface-cli login` or set HF_TOKEN=hf_... to fix this."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +174,7 @@ def load_and_prepare_datasets(
     """
     logger.info("Loading primary dataset: %s", EVERYAYAH_DATASET)
     try:
-        everyayah = load_dataset(EVERYAYAH_DATASET, trust_remote_code=True)
+        everyayah = load_dataset(EVERYAYAH_DATASET, trust_remote_code=True, token=HF_TOKEN)
         logger.info(
             "EveryAyah loaded: %d train, %d validation",
             len(everyayah.get("train", [])),
@@ -163,7 +189,7 @@ def load_and_prepare_datasets(
     retasy = None
     try:
         logger.info("Loading secondary dataset: %s", RETASY_DATASET)
-        retasy = load_dataset(RETASY_DATASET, trust_remote_code=True)
+        retasy = load_dataset(RETASY_DATASET, trust_remote_code=True, token=HF_TOKEN)
         logger.info("RetaSy loaded: %s", {k: len(v) for k, v in retasy.items()})
     except Exception as e:
         logger.warning("Could not load RetaSy dataset (non-fatal): %s", e)
@@ -172,7 +198,7 @@ def load_and_prepare_datasets(
     tarteel = None
     try:
         logger.info("Loading Tarteel.io dataset: %s", TARTEEL_DATASET)
-        tarteel = load_dataset(TARTEEL_DATASET, trust_remote_code=True)
+        tarteel = load_dataset(TARTEEL_DATASET, trust_remote_code=True, token=HF_TOKEN)
         logger.info("Tarteel loaded: %s", {k: len(v) for k, v in tarteel.items()})
     except Exception as e:
         logger.warning("Could not load Tarteel dataset (non-fatal): %s", e)
