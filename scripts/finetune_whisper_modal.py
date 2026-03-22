@@ -64,7 +64,8 @@ training_image = (
         "soundfile>=0.12.0",
         "librosa>=0.10.0",
         "torchaudio>=2.1.0",
-        "torchcodec",  # Required by datasets lib for audio decoding
+        "torchcodec>=0.1.0",  # Required by datasets>=4.0 for audio decoding
+        "scipy>=1.10.0",  # Fallback audio decoder
         # Evaluation
         "evaluate>=0.4.0",
         "jiwer>=3.0.0",
