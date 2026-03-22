@@ -174,7 +174,7 @@ def load_and_prepare_datasets(
     """
     logger.info("Loading primary dataset: %s", EVERYAYAH_DATASET)
     try:
-        everyayah = load_dataset(EVERYAYAH_DATASET, trust_remote_code=True, token=HF_TOKEN)
+        everyayah = load_dataset(EVERYAYAH_DATASET, token=HF_TOKEN)
         logger.info(
             "EveryAyah loaded: %d train, %d validation",
             len(everyayah.get("train", [])),
@@ -189,7 +189,7 @@ def load_and_prepare_datasets(
     retasy = None
     try:
         logger.info("Loading secondary dataset: %s", RETASY_DATASET)
-        retasy = load_dataset(RETASY_DATASET, trust_remote_code=True, token=HF_TOKEN)
+        retasy = load_dataset(RETASY_DATASET, token=HF_TOKEN)
         logger.info("RetaSy loaded: %s", {k: len(v) for k, v in retasy.items()})
     except Exception as e:
         logger.warning("Could not load RetaSy dataset (non-fatal): %s", e)
@@ -198,7 +198,7 @@ def load_and_prepare_datasets(
     tarteel = None
     try:
         logger.info("Loading Tarteel.io dataset: %s", TARTEEL_DATASET)
-        tarteel = load_dataset(TARTEEL_DATASET, trust_remote_code=True, token=HF_TOKEN)
+        tarteel = load_dataset(TARTEEL_DATASET, token=HF_TOKEN)
         logger.info("Tarteel loaded: %s", {k: len(v) for k, v in tarteel.items()})
     except Exception as e:
         logger.warning("Could not load Tarteel dataset (non-fatal): %s", e)
