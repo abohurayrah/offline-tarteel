@@ -74,21 +74,36 @@ training_image = (
 
 
 # ---------------------------------------------------------------------------
-# Training function — runs on A100
+# GPU configuration
+# ---------------------------------------------------------------------------
+# Options (set NUM_GPUS env var):
+#   1x A100-80GB: ~8-12 hours, ~$25-35   (default, most reliable)
+#   2x A100-80GB: ~4-6 hours,  ~$25-35   (same cost, 2x faster)
+#   4x A100-80GB: ~2-3 hours,  ~$25-35   (same cost, 4x faster)
+#   1x H100:      ~5-7 hours,  ~$30-40   (fastest single GPU)
+#
+# Multi-GPU uses accelerate's data-parallel training automatically.
+# Total cost is similar because you rent more GPUs for less time.
+
+NUM_GPUS: int = int(os.environ.get("NUM_GPUS", "1"))
+
+
+# ---------------------------------------------------------------------------
+# Training function — runs on A100/H100
 # ---------------------------------------------------------------------------
 
 @app.function(
     image=training_image,
-    gpu=modal.gpu.A100(size="80GB"),
+    gpu=modal.gpu.A100(size="80GB", count=NUM_GPUS),
     volumes={"/output": output_volume},
-    timeout=8 * 60 * 60,  # 8 hours max
-    memory=65536,  # 64 GB system RAM
+    timeout=12 * 60 * 60,  # 12 hours max
+    memory=65536 * max(1, NUM_GPUS),  # Scale RAM with GPUs
     secrets=[
         modal.Secret.from_name("huggingface-secret", required=False),
     ],
 )
 def train():
-    """Run the Whisper fine-tuning script on an A100-80GB."""
+    """Run the Whisper fine-tuning script on A100 GPU(s)."""
     import subprocess
     import sys
 
@@ -111,17 +126,40 @@ def train():
         if val:
             env[key] = val
 
+    # Multi-GPU: increase batch size proportionally
+    if NUM_GPUS > 1:
+        base_batch = int(env.get("BATCH_SIZE", "4"))
+        env["BATCH_SIZE"] = str(base_batch)  # per-GPU batch stays same
+        # Reduce grad accum since effective batch = per_gpu * num_gpus * grad_accum
+        base_accum = int(env.get("GRAD_ACCUM", "8"))
+        env["GRAD_ACCUM"] = str(max(1, base_accum // NUM_GPUS))
+
     print("=" * 60)
-    print("Starting Whisper Quranic fine-tuning on Modal A100-80GB")
+    print(f"Starting Whisper Quranic fine-tuning on Modal {NUM_GPUS}x A100-80GB")
     print("=" * 60)
+    print(f"  GPUs:        {NUM_GPUS}x A100-80GB")
     print(f"  Output dir:  /output/whisper-small-quran")
     print(f"  HF Token:    {'set' if hf_token else 'not set'}")
     print(f"  Hub repo:    {env.get('HUB_REPO', 'tarteel-ai/whisper-small-quran-lora')}")
+    if NUM_GPUS > 1:
+        print(f"  Batch/GPU:   {env.get('BATCH_SIZE', '4')}")
+        print(f"  Grad accum:  {env.get('GRAD_ACCUM', '?')}")
+        print(f"  Effective:   {int(env.get('BATCH_SIZE','4')) * NUM_GPUS * int(env.get('GRAD_ACCUM','1'))}")
     print()
 
-    # Run the training script as a subprocess so it gets the full GPU context
+    # For multi-GPU: use accelerate to launch distributed training
+    if NUM_GPUS > 1:
+        cmd = [
+            sys.executable, "-m", "accelerate", "launch",
+            "--num_processes", str(NUM_GPUS),
+            "--mixed_precision", "fp16",
+            "/app/finetune_whisper_quran.py",
+        ]
+    else:
+        cmd = [sys.executable, "/app/finetune_whisper_quran.py"]
+
     result = subprocess.run(
-        [sys.executable, "/app/finetune_whisper_quran.py"],
+        cmd,
         env=env,
         capture_output=False,
     )
@@ -242,8 +280,12 @@ def main(
         list_artifacts.remote()
         return
 
-    print("Launching training on Modal A100-80GB...")
-    print("This will take 6-8 hours for 3 epochs on EveryAyah (829h).")
+    print(f"Launching training on Modal {NUM_GPUS}x A100-80GB...")
+    if NUM_GPUS == 1:
+        print("Estimated: 8-12 hours for 3 epochs. ~$25-35.")
+        print("Tip: NUM_GPUS=4 modal run ... for 2-3 hours at same cost.")
+    else:
+        print(f"Estimated: {max(2, 10 // NUM_GPUS)}-{max(3, 12 // NUM_GPUS)} hours for 3 epochs. ~$25-35.")
     print()
 
     # Run training
