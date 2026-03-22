@@ -1,5 +1,5 @@
-import { ratio, fragmentScore, sellersWordMatch } from "./levenshtein";
-import type { QuranVerse } from "./types";
+import { ratio, fragmentScore, sellersWordMatch, phoneticRatio } from "./levenshtein";
+import type { QuranVerse, VerseMatch, VerseMatchCandidate } from "./types";
 
 /**
  * Normalize Arabic text for comparison:
@@ -204,16 +204,23 @@ export class QuranDB {
   ): number {
     const lengthRatio = textNoSpace.length / verseNs.length;
 
+    let baseScore: number;
     if (lengthRatio >= 0.7 && lengthRatio <= 1.3) {
-      return ratio(textNoSpace, verseNs);
+      baseScore = ratio(textNoSpace, verseNs);
     } else if (lengthRatio < 0.7) {
       // Sellers' semi-global alignment via fragmentScore
       const frag = fragmentScore(textNoSpace, verseNs);
       const r = ratio(textNoSpace, verseNs);
-      return Math.max(frag, 0.6 * frag + 0.4 * r);
+      baseScore = Math.max(frag, 0.6 * frag + 0.4 * r);
     } else {
-      return ratio(textNoSpace, verseNs);
+      baseScore = ratio(textNoSpace, verseNs);
     }
+
+    const phonetic = phoneticRatio(textNoSpace, verseNs);
+    if (phonetic > baseScore) {
+      return 0.8 * baseScore + 0.2 * phonetic;
+    }
+    return baseScore;
   }
 
   /**
@@ -286,15 +293,49 @@ export class QuranDB {
   matchVerse(
     text: string,
     threshold = 0.3,
-    maxSpan = 3,
+    maxSpan = 6,
     hint: [number, number] | null = null,
     returnTopK = 0,
+    surahContext: number | null = null,
   ): Record<string, any> | null {
     if (!text.trim()) return null;
 
     // Normalize the input transcript
     const normText = normalizeArabic(text);
     const noSpaceText = normText.replace(/ /g, "");
+
+    // Muqattaat (disconnected letters) — very short verses that need special handling
+    const MUQATTAAT_VERSES: Map<string, [number, number]> = new Map([
+      ["الم", [2, 1]],      // Al-Baqarah, Aal-Imran, Al-Ankabut, Ar-Rum, Luqman, As-Sajdah
+      ["المص", [7, 1]],     // Al-A'raf
+      ["الر", [10, 1]],     // Yunus, Hud, Yusuf, Ibrahim, Al-Hijr
+      ["المر", [13, 1]],    // Ar-Ra'd
+      ["كهيعص", [19, 1]],   // Maryam
+      ["طه", [20, 1]],      // Ta-Ha
+      ["طسم", [26, 1]],     // Ash-Shu'ara, Al-Qasas
+      ["طس", [27, 1]],      // An-Naml
+      ["يس", [36, 1]],      // Ya-Sin
+      ["ص", [38, 1]],       // Sad
+      ["حم", [40, 1]],      // Ghafir, Fussilat, Az-Zukhruf, Ad-Dukhan, Al-Jathiyah, Al-Ahqaf
+      ["حمعسق", [42, 1]],   // Ash-Shura (42:1-2)
+      ["ق", [50, 1]],       // Qaf
+      ["ن", [68, 1]],       // Al-Qalam
+    ]);
+
+    if (noSpaceText && noSpaceText.length >= 1 && noSpaceText.length <= 6) {
+      const muq = MUQATTAAT_VERSES.get(noSpaceText);
+      if (muq) {
+        const v = this.getVerse(muq[0], muq[1]);
+        if (v) {
+          return {
+            ...v,
+            score: 1.0,
+            raw_score: 1.0,
+            bonus: 0,
+          };
+        }
+      }
+    }
 
     if (!noSpaceText || noSpaceText.length < 3) return null;
 
@@ -341,10 +382,13 @@ export class QuranDB {
         const swScore = QuranDB._slidingWordWindowScore(normText, v.text_words);
         raw = Math.max(raw, swScore * 0.92); // slight discount vs full-verse match
       }
-      const bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
+      let bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
       if (bonus > 0) {
         const sp = QuranDB._suffixPrefixScore(normText, v.text_norm!);
         raw = Math.max(raw, sp);
+      }
+      if (surahContext !== null && v.surah === surahContext && bonus === 0) {
+        bonus = 0.06;
       }
       scored.push([v, raw, bonus, Math.min(raw + bonus, 1.0)]);
     }
@@ -354,14 +398,18 @@ export class QuranDB {
         // Tiebreaker: prefer verse closest in length to transcript
         const lenA = a[0].text_norm_ns!.length;
         const lenB = b[0].text_norm_ns!.length;
-        return Math.abs(lenA - noSpaceText.length) - Math.abs(lenB - noSpaceText.length);
+        const lenDiff = Math.abs(lenA - noSpaceText.length) - Math.abs(lenB - noSpaceText.length);
+        if (lenDiff !== 0) return lenDiff;
+        // Secondary tiebreaker: prefer earlier surah:ayah
+        if (a[0].surah !== b[0].surah) return a[0].surah - b[0].surah;
+        return a[0].ayah - b[0].ayah;
       }
       return diff;
     });
 
     // Top-20 surahs for Pass 2 multi-ayah spans
     const pass2Surahs = new Set<number>();
-    for (let idx = 0; idx < Math.min(scored.length, 20); idx++) {
+    for (let idx = 0; idx < Math.min(scored.length, 30); idx++) {
       pass2Surahs.add(scored[idx][0].surah);
     }
 
@@ -401,7 +449,13 @@ export class QuranDB {
           const combined = [firstText]
             .concat(chunk.slice(1).map((c) => c.text_norm!))
             .join(" ");
-          const raw = ratio(normText, combined);
+          const combinedNs = combined.replace(/ /g, "");
+          let raw = ratio(normText, combined);
+          raw = Math.max(raw, ratio(noSpaceText, combinedNs));
+          if (noSpaceText.length < combinedNs.length * 0.85) {
+            const frag = fragmentScore(noSpaceText, combinedNs);
+            raw = Math.max(raw, frag * 0.95);
+          }
           const bonus =
             bonuses.get(`${chunk[0].surah}:${chunk[0].ayah}`) ?? 0.0;
           const score = Math.min(raw + bonus, 1.0);
@@ -429,6 +483,20 @@ export class QuranDB {
       return best;
     }
     return null;
+  }
+
+  /**
+   * Alias for matchVerse — used when caller wants to pass surahContext.
+   */
+  matchVerseWithSurahId(
+    text: string,
+    threshold = 0.3,
+    maxSpan = 6,
+    hint: [number, number] | null = null,
+    returnTopK = 0,
+    surahContext: number | null = null,
+  ): Record<string, any> | null {
+    return this.matchVerse(text, threshold, maxSpan, hint, returnTopK, surahContext);
   }
 
   /**

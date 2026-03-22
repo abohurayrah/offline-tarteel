@@ -1,7 +1,8 @@
 import { ratio as levRatio } from "./levenshtein";
 import { QuranDB, partialRatio, normalizeArabic } from "./quran-db";
-import type { QuranVerse, WorkerOutbound, SurroundingVerse, CandidateVerse } from "./types";
+import type { QuranVerse, WorkerOutbound, SurroundingVerse, CandidateVerse, VerseMatch, VerseMatchCandidate } from "./types";
 import {
+  SAMPLE_RATE,
   TRIGGER_SAMPLES,
   MAX_WINDOW_SAMPLES,
   SILENCE_RMS_THRESHOLD,
@@ -21,7 +22,7 @@ export interface TranscribeResult {
   rawTokens: string;
 }
 
-type TranscribeFn = (audio: Float32Array) => Promise<TranscribeResult>;
+type TranscribeFn = (audio: Float32Array, prompt?: string) => Promise<TranscribeResult>;
 
 function concatFloat32(a: Float32Array, b: Float32Array): Float32Array {
   const result = new Float32Array(a.length + b.length);
@@ -125,9 +126,16 @@ export class RecitationTracker {
   private accumulatedText = "";
   private accumulatedCycles = 0;
 
+  // Long-verse mode state
+  private _longVerseMode = false;
+  private _longVerseModeCycles = 0;
+
   // Ambiguity guard deferral tracking
   private lastDeferredRef: string | null = null;
   private consecutiveDeferrals = 0;
+
+  // Session surah context: persists across tracking resets to prevent surah-level misidentification
+  private sessionSurah: number | null = null;
 
   private db: QuranDB;
   private transcribe: TranscribeFn;
@@ -148,7 +156,9 @@ export class RecitationTracker {
     const maxSamples =
       this.trackingVerse !== null
         ? TRACKING_MAX_WINDOW_SAMPLES
-        : MAX_WINDOW_SAMPLES;
+        : this._longVerseMode
+          ? SAMPLE_RATE * 18  // 18 seconds for long verses
+          : MAX_WINDOW_SAMPLES;
     if (this.fullAudio.length > maxSamples) {
       this.fullAudio = this.fullAudio.slice(-maxSamples);
     }
@@ -207,7 +217,12 @@ export class RecitationTracker {
     }
 
     // Transcribe and normalize Arabic
-    const { text: rawText } = await this.transcribe(this.fullAudio.slice());
+    // Pass current verse text as decoder prompt to bias toward correct vocabulary
+    const trackingPrompt = this.trackingVerse?.text_norm?.slice(-80);
+    const { text: rawText } = await this.transcribe(
+      this.fullAudio.slice(),
+      trackingPrompt,
+    );
     const text = normalizeArabic(rawText);
     if (!text || text.trim().length < 3) return messages;
 
@@ -274,14 +289,19 @@ export class RecitationTracker {
               this.prevEmittedText = this.lastEmittedText;
               this.lastEmittedRef = ref;
               this.lastEmittedText = newVerse.text_norm!;
-              this._enterTracking(newVerse, ref);
+              this._enterTracking(newVerse);
               this.fullAudio = this.fullAudio.slice(-TRIGGER_SAMPLES);
               return messages;
             }
           }
         }
       }
-      if (this.staleCycles >= STALE_CYCLE_LIMIT) {
+      // Dynamic limit: longer verses get more patience (1 extra cycle per 8 words)
+      const effectiveStaleLimit = Math.max(
+        STALE_CYCLE_LIMIT,
+        Math.floor(this.trackingVerseWords.length / 8),
+      );
+      if (this.staleCycles >= effectiveStaleLimit) {
         this._exitTracking(
           `stale (${this.staleCycles} cycles, no progress)`,
         );
@@ -291,6 +311,57 @@ export class RecitationTracker {
       }
     } else {
       this.staleCycles = 0;
+    }
+
+    // Coverage-based exit: if we've covered most of the verse but tracking stalled,
+    // advance to next verse rather than waiting for full stale timeout
+    if (!advanced && this.staleCycles >= 2 && this.trackingLastWordIdx >= 0) {
+      const coverage = (this.trackingLastWordIdx + 1) / this.trackingVerseWords.length;
+      if (coverage >= 0.85) {
+        // Treat as verse complete — high coverage + stalled = user finished
+        const curRef: [number, number] = [
+          this.trackingVerse!.surah,
+          this.trackingVerse!.ayah,
+        ];
+        this.lastEmittedRef = curRef;
+        this.lastEmittedText = this.trackingVerse!.text_norm!;
+        this.cyclesSinceEmit = 0;
+
+        if (this.trackingVerse!.surah === this.lastConfirmedSurah) {
+          this.lastConfirmedAyah = Math.max(this.lastConfirmedAyah, this.trackingVerse!.ayah);
+        } else {
+          this.lastConfirmedSurah = this.trackingVerse!.surah;
+          this.lastConfirmedAyah = this.trackingVerse!.ayah;
+        }
+
+        const nextV = this.db.getNextVerse(curRef[0], curRef[1]);
+        this._exitTracking("verse complete");
+
+        if (nextV) {
+          const nextRef: [number, number] = [nextV.surah, nextV.ayah];
+          const surrounding = getSurroundingVerses(this.db, nextV.surah, nextV.ayah);
+          messages.push({
+            type: "verse_match",
+            surah: nextV.surah,
+            ayah: nextV.ayah,
+            verse_text: nextV.text_uthmani,
+            surah_name: nextV.surah_name,
+            confidence: 0.95,
+            surrounding_verses: surrounding,
+          });
+          this.prevEmittedRef = this.lastEmittedRef;
+          this.prevEmittedText = this.lastEmittedText;
+          this.lastEmittedRef = nextRef;
+          this.lastEmittedText = nextV.text_norm!;
+          this._enterTracking(nextV);
+          this.transitionCooldown = 3;
+        }
+
+        this.fullAudio = new Float32Array(0);
+        this.accumulatedText = "";
+        this.accumulatedCycles = 0;
+        return messages;
+      }
     }
 
     // Send word_progress if advanced
@@ -359,7 +430,7 @@ export class RecitationTracker {
           this.prevEmittedText = this.lastEmittedText;
           this.lastEmittedRef = nextRef;
           this.lastEmittedText = nextV.text_norm!;
-          this._enterTracking(nextV, nextRef);
+          this._enterTracking(nextV);
 
           // Activate anti-bounce cooldown (3 cycles ≈ 1.5s)
           this.transitionCooldown = 3;
@@ -446,7 +517,7 @@ export class RecitationTracker {
 
     // Match against QuranDB — use narrow matching if we have recent context
     // Always request top-K candidates for live narrowing UI
-    let match: Record<string, any> | null;
+    let match: VerseMatch | null;
     if (this.lastEmittedRef && this.cyclesSinceEmit <= 3) {
       match = this.db.matchVerseNarrow(
         matchText,
@@ -461,15 +532,16 @@ export class RecitationTracker {
         4,
         this.lastEmittedRef,
         10,
+        this.sessionSurah,
       );
     }
 
     // Emit candidate list for live narrowing UI
     if (match?.runners_up?.length) {
       const candidates: CandidateVerse[] = match.runners_up
-        .filter((ru: any) => ru.score >= 0.15)
+        .filter((ru) => ru.score >= 0.15)
         .slice(0, 10)
-        .map((ru: any) => ({
+        .map((ru) => ({
           surah: ru.surah,
           ayah: ru.ayah,
           score: ru.score,
@@ -502,15 +574,35 @@ export class RecitationTracker {
       }
     }
 
+    // Long-verse mode: if top candidate has 20+ words and we've been accumulating,
+    // extend the audio window to capture more of the verse
+    if (match && match.score >= 0.3 && match.score < effectiveThreshold && this.accumulatedCycles >= 3) {
+      const topVerse = this.db.getVerse(match.surah, match.ayah);
+      if (topVerse?.text_words && topVerse.text_words.length > 20) {
+        if (!this._longVerseMode) {
+          this._longVerseMode = true;
+          this._longVerseModeCycles = 0;
+        }
+      }
+    }
+    // Expire long-verse mode after 8 cycles to prevent unbounded buffer growth
+    if (this._longVerseMode) {
+      this._longVerseModeCycles++;
+      if (this._longVerseModeCycles > 8) {
+        this._longVerseMode = false;
+        this._longVerseModeCycles = 0;
+      }
+    }
+
     if (match && match.score >= effectiveThreshold) {
       const ref: [number, number] = [match.surah, match.ayah];
 
       // Ambiguity guard: only suppress when scores are nearly identical
       // and the transcript hasn't clearly differentiated the verses.
-      const runnersUp: Record<string, any>[] = match.runners_up ?? [];
+      const runnersUp: VerseMatchCandidate[] = match.runners_up ?? [];
       if (runnersUp.length >= 2) {
         const matchVerse = this.db.getVerse(match.surah, match.ayah);
-        let altRunner: Record<string, any> | null = null;
+        let altRunner: VerseMatchCandidate | null = null;
         for (const ru of runnersUp) {
           if (ru.surah !== match.surah || ru.ayah !== match.ayah) {
             altRunner = ru;
@@ -599,11 +691,18 @@ export class RecitationTracker {
       });
 
       this.hasEverMatched = true;
+      this._longVerseMode = false;
+      this._longVerseModeCycles = 0;
       this.cyclesSinceEmit = 0;
       this.consecutiveDeferrals = 0;
       this.lastDeferredRef = null;
       this.accumulatedText = "";
       this.accumulatedCycles = 0;
+
+      // Update session surah context (or switch if confident enough)
+      if (match.score >= 0.75 || this.sessionSurah === null) {
+        this.sessionSurah = match.surah;
+      }
 
       // For multi-verse spans, advance hint to the last verse
       const ayahEnd = match.ayah_end;
@@ -619,7 +718,7 @@ export class RecitationTracker {
 
       // Enter tracking mode
       if (verse) {
-        this._enterTracking(verse, ref);
+        this._enterTracking(verse);
       } else {
         // No tracking — reset window
         this.fullAudio = tail.slice();
@@ -688,7 +787,7 @@ export class RecitationTracker {
     return words.length - 1;
   }
 
-  private _enterTracking(verse: QuranVerse, _ref: [number, number]): void {
+  private _enterTracking(verse: QuranVerse): void {
     this.trackingVerse = verse;
     this.trackingVerseWords = verse.text_words!;
     this.trackingLastWordIdx = -1;
@@ -696,9 +795,9 @@ export class RecitationTracker {
     this.staleCycles = 0;
     this.accumulatedText = "";
     this.accumulatedCycles = 0;
-    // Grace period: skip 2 tracking cycles (~1s) to let stale audio from
+    // Grace period: skip 1 tracking cycle to let stale audio from
     // the completed verse flush out before starting word alignment
-    this.transitionGraceCycles = 2;
+    this.transitionGraceCycles = 1;
 
     // Initialize confirmed verse tracking on first entry
     if (this.lastConfirmedSurah < 0) {
@@ -749,5 +848,7 @@ export class RecitationTracker {
     this.staleCycles = 0;
     this.accumulatedText = "";
     this.accumulatedCycles = 0;
+    this._longVerseMode = false;
+    this._longVerseModeCycles = 0;
   }
 }

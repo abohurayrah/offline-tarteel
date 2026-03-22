@@ -1,7 +1,12 @@
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile, readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+
+/** Validate that an ID is a safe UUID (no path traversal) */
+function isValidId(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
+}
 
 const STORAGE_DIR = process.env.STORAGE_DIR
   ? join(process.env.STORAGE_DIR, "../diagnostics")
@@ -82,6 +87,7 @@ diagnosticsApp.get("/", async (c) => {
 // GET /api/diagnostics/:id/audio — stream audio
 diagnosticsApp.get("/:id/audio", async (c) => {
   const id = c.req.param("id");
+  if (!isValidId(id)) return c.json({ error: "Invalid ID" }, 400);
   const filePath = join(STORAGE_DIR, id, "audio.wav");
   try {
     const data = await readFile(filePath);

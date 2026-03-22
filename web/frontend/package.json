@@ -9,9 +9,14 @@
     "build:server": "npx esbuild server/index.ts --bundle --platform=node --format=esm --outfile=dist-server/index.mjs --packages=external",
     "start": "node dist-server/index.mjs",
     "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:unit": "vitest run test/unit/",
     "test:streaming": "tsx test/validate-streaming.ts",
     "test:onnx": "tsx test/test-onnx-smoke.ts",
-    "test:onnx:all": "tsx test/test-onnx-smoke.ts --all"
+    "test:onnx:all": "tsx test/test-onnx-smoke.ts --all",
+    "benchmark:whisper": "tsx test/benchmark-whisper.ts",
+    "benchmark:compare": "tsx test/compare-benchmarks.ts"
   },
   "dependencies": {
     "@fontsource/amiri": "^5.2.8",
@@ -27,6 +32,7 @@
     "tsx": "^4.19.0",
     "typescript": "~5.9.3",
     "vite": "^7.3.1",
-    "vite-plugin-pwa": "^1.2.0"
+    "vite-plugin-pwa": "^1.2.0",
+    "vitest": "^4.1.0"
   }
 }

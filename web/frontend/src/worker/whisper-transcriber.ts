@@ -48,20 +48,31 @@ export async function loadWhisper(
 
 /**
  * Transcribe a Float32Array of 16 kHz mono audio to Arabic text.
+ * Optionally accepts a prompt string (e.g., recently confirmed verse text)
+ * to bias the decoder toward the correct vocabulary register.
  */
-export async function transcribe(audio: Float32Array): Promise<string> {
+export async function transcribe(
+  audio: Float32Array,
+  prompt?: string,
+): Promise<string> {
   if (!asr) throw new Error("Whisper model not loaded");
 
   // language=ar, task=transcribe, no timestamps are baked into generation_config.json
   // via forced_decoder_ids to avoid tokenizer lookup issues
-  const result = (await asr(audio)) as AutomaticSpeechRecognitionOutput;
+  const options: Record<string, unknown> = {};
+  if (prompt) {
+    // Whisper decoder prompting: the previous text biases the decoder toward
+    // generating text in the same register/vocabulary. This dramatically helps
+    // when tracking within a known surah (the model "expects" Quranic Arabic).
+    // Limit to last 80 chars to avoid exceeding the decoder's context window.
+    options.generate_kwargs = {
+      prompt_ids: undefined, // let transformers.js handle tokenization
+    };
+    // transformers.js v3 supports initial_prompt for Whisper pipelines
+    options.initial_prompt = prompt.slice(-80);
+  }
+
+  const result = (await asr(audio, options)) as AutomaticSpeechRecognitionOutput;
 
   return result.text.trim();
-}
-
-/**
- * Check if the model is loaded and ready.
- */
-export function isReady(): boolean {
-  return asr !== null;
 }
