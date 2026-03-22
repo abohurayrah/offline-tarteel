@@ -24,3 +24,5 @@ data/*.log
 .vscode/
 __pycache__/
 *.pyc
+scripts/.env
+.env
