@@ -126,7 +126,7 @@ def _gpu_spec() -> str:
     volumes={"/output": output_volume},
     timeout=12 * 60 * 60,  # 12 hours max
     secrets=[
-        modal.Secret.from_name("huggingface-secret"),
+        modal.Secret.from_name("huggingface"),
     ],
 )
 def train():
