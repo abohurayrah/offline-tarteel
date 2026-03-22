@@ -91,6 +91,41 @@ export type WorkerOutbound =
   | VerseCompleteMessage;
 
 // ---------------------------------------------------------------------------
+// Verse match results (from QuranDB.matchVerse / matchVerseNarrow)
+// ---------------------------------------------------------------------------
+export interface VerseMatchCandidate {
+  surah: number;
+  ayah: number;
+  raw_score: number;
+  bonus: number;
+  score: number;
+  text_norm: string;
+  surah_name: string;
+  surah_name_en: string;
+  text_uthmani: string;
+}
+
+export interface VerseMatch {
+  surah: number;
+  ayah: number;
+  ayah_end?: number;
+  text?: string;
+  text_uthmani?: string;
+  text_clean?: string;
+  surah_name?: string;
+  surah_name_en?: string;
+  text_norm?: string;
+  text_norm_ns?: string;
+  text_norm_no_bsm?: string | null;
+  text_norm_no_bsm_ns?: string | null;
+  text_words?: string[];
+  score: number;
+  raw_score: number;
+  bonus: number;
+  runners_up?: VerseMatchCandidate[];
+}
+
+// ---------------------------------------------------------------------------
 // Quran data (from quran.json)
 // ---------------------------------------------------------------------------
 export interface QuranVerse {
@@ -108,21 +143,12 @@ export interface QuranVerse {
   text_words?: string[];                     // words of normalized text
 }
 
-export interface SurahData {
-  surah: number;
-  surah_name: string;
-  surah_name_en: string;
-  verses: { ayah: number; text_uthmani: string }[];
-}
-
 // ---------------------------------------------------------------------------
 // Constants (matching server.py exactly)
 // ---------------------------------------------------------------------------
 export const SAMPLE_RATE = 16000;
-export const TRIGGER_SECONDS = 2.0;
-export const TRIGGER_SAMPLES = SAMPLE_RATE * TRIGGER_SECONDS;
-export const MAX_WINDOW_SECONDS = 10.0;
-export const MAX_WINDOW_SAMPLES = SAMPLE_RATE * MAX_WINDOW_SECONDS;
+export const TRIGGER_SAMPLES = SAMPLE_RATE * 2.0;
+export const MAX_WINDOW_SAMPLES = SAMPLE_RATE * 10.0;
 export const SILENCE_RMS_THRESHOLD = 0.005;
 
 export const VERSE_MATCH_THRESHOLD = 0.45;
@@ -130,18 +156,12 @@ export const FIRST_MATCH_THRESHOLD = 0.75;
 export const RAW_TRANSCRIPT_THRESHOLD = 0.25;
 export const SURROUNDING_CONTEXT = 2;
 
-export const TRACKING_TRIGGER_SECONDS = 0.5;
-export const TRACKING_TRIGGER_SAMPLES = SAMPLE_RATE * TRACKING_TRIGGER_SECONDS;
-export const TRACKING_SILENCE_TIMEOUT = 2.0;
-export const TRACKING_SILENCE_SAMPLES = SAMPLE_RATE * TRACKING_SILENCE_TIMEOUT;
-export const TRACKING_MAX_WINDOW_SECONDS = 5.0;
-export const TRACKING_MAX_WINDOW_SAMPLES =
-  SAMPLE_RATE * TRACKING_MAX_WINDOW_SECONDS;
+export const TRACKING_TRIGGER_SAMPLES = SAMPLE_RATE * 0.5;
+export const TRACKING_SILENCE_SAMPLES = SAMPLE_RATE * 2.0;
+export const TRACKING_MAX_WINDOW_SAMPLES = SAMPLE_RATE * 5.0;
 export const STALE_CYCLE_LIMIT = 4;
 export const LOOKAHEAD = 5;
 
 // Forced alignment constants
-export const FA_TRIGGER_SAMPLES = SAMPLE_RATE * 0.3;  // 300ms — fast FA updates
 export const FA_CONFIDENCE_GOOD = 0.7;
 export const FA_CONFIDENCE_WARN = 0.4;
-export const FA_VERSE_COMPLETE_THRESHOLD = 0.85;  // fraction of words needed

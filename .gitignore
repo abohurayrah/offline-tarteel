@@ -19,3 +19,8 @@ web/frontend/public/*.mjs
 
 # Data artifacts
 data/*.log
+# Additional ignores
+.DS_Store
+.vscode/
+__pycache__/
+*.pyc

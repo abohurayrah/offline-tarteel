@@ -4,6 +4,7 @@ import "@fontsource/amiri-quran/400.css";
 import "./style.css";
 
 import { initSurahDropdown, openReportDialog } from "./report-dialog";
+import { encodeWav } from "./lib/wav-encoder";
 
 import type {
   VerseMatchMessage,
@@ -929,7 +930,7 @@ async function sendDiagnosticReport(trigger: string): Promise<void> {
     // Only send last 30s of audio max
     const maxSamples = 16000 * 30;
     const audioSlice = merged.length > maxSamples ? merged.slice(-maxSamples) : merged;
-    const wavBlob = float32ToWav(audioSlice, 16000);
+    const wavBlob = encodeWav(audioSlice, 16000);
 
     const form = new FormData();
     form.append("audio", wavBlob, "diagnostic.wav");
@@ -940,38 +941,6 @@ async function sendDiagnosticReport(trigger: string): Promise<void> {
   } catch (err) {
     console.error("Failed to send diagnostic report:", err);
   }
-}
-
-function float32ToWav(samples: Float32Array, sampleRate: number): Blob {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
-  const view = new DataView(buffer);
-
-  function writeStr(off: number, str: string) {
-    for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i));
-  }
-
-  writeStr(0, "RIFF");
-  view.setUint32(4, 36 + samples.length * 2, true);
-  writeStr(8, "WAVE");
-  writeStr(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeStr(36, "data");
-  view.setUint32(40, samples.length * 2, true);
-
-  let off = 44;
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-    off += 2;
-  }
-
-  return new Blob([buffer], { type: "audio/wav" });
 }
 
 // ---------------------------------------------------------------------------

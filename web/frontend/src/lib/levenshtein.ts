@@ -166,3 +166,85 @@ export function sellersWordMatch(
 
   return { score: bestScore, startIdx: bestStart, endIdx: bestEnd };
 }
+
+/**
+ * Arabic phonetic confusion cost matrix.
+ * These letter pairs are systematically confused by ASR models because
+ * they share similar acoustic features (emphatic vs plain, pharyngeal, etc.).
+ * Cost < 1.0 means a substitution between these letters is "cheaper" than
+ * a substitution between unrelated letters.
+ */
+const ARABIC_PHONETIC_COSTS: Map<string, number> = new Map([
+  // Emphatic vs plain sibilants
+  ["ص" + "س", 0.3], ["س" + "ص", 0.3],
+  // Emphatic vs plain dentals
+  ["ط" + "ت", 0.3], ["ت" + "ط", 0.3],
+  // Emphatic vs plain
+  ["ض" + "د", 0.3], ["د" + "ض", 0.3],
+  ["ظ" + "ذ", 0.3], ["ذ" + "ظ", 0.3],
+  // Pharyngeal
+  ["ه" + "ح", 0.35], ["ح" + "ه", 0.35],
+  // Uvular vs velar
+  ["ق" + "ك", 0.4], ["ك" + "ق", 0.4],
+  // Pharyngeal vs glottal
+  ["ع" + "ء", 0.35], ["ء" + "ع", 0.35],
+  // Hamza forms (after normalization these should be ا, but just in case)
+  ["ا" + "ء", 0.3], ["ء" + "ا", 0.3],
+  // Shin vs sin
+  ["ش" + "س", 0.4], ["س" + "ش", 0.4],
+  // Tha vs sin (interdental confusion)
+  ["ث" + "س", 0.4], ["س" + "ث", 0.4],
+  // Ghayn vs qaf
+  ["غ" + "ق", 0.4], ["ق" + "غ", 0.4],
+]);
+
+/**
+ * Phonetic-aware Levenshtein distance for Arabic text.
+ * Same algorithm as distance() but with reduced substitution costs
+ * for acoustically similar Arabic letter pairs.
+ */
+export function phoneticDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+
+  if (a.length > b.length) [a, b] = [b, a];
+
+  const m = a.length;
+  const n = b.length;
+  // Use Float32Array for fractional costs
+  let prev = new Float32Array(m + 1);
+  let curr = new Float32Array(m + 1);
+
+  for (let i = 0; i <= m; i++) prev[i] = i;
+
+  for (let j = 1; j <= n; j++) {
+    curr[0] = j;
+    for (let i = 1; i <= m; i++) {
+      if (a[i - 1] === b[j - 1]) {
+        curr[i] = prev[i - 1];
+      } else {
+        const subCost = ARABIC_PHONETIC_COSTS.get(a[i - 1] + b[j - 1]) ?? 1;
+        curr[i] = Math.min(
+          prev[i] + 1,          // deletion
+          curr[i - 1] + 1,      // insertion
+          prev[i - 1] + subCost, // substitution (phonetic cost)
+        );
+      }
+    }
+    [prev, curr] = [curr, prev];
+  }
+
+  return prev[m];
+}
+
+/**
+ * Phonetic-aware Levenshtein similarity ratio for Arabic text.
+ * Returns 1.0 for identical strings, 0.0 for completely different.
+ * Uses reduced substitution costs for acoustically similar Arabic letters.
+ */
+export function phoneticRatio(a: string, b: string): number {
+  const lenSum = a.length + b.length;
+  if (lenSum === 0) return 1.0;
+  return (lenSum - phoneticDistance(a, b)) / lenSum;
+}

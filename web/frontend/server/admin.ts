@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -11,8 +12,16 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "tarteel-admin";
 
 export const adminApp = new Hono();
 
-// Auth check
-function isAuthed(c: any): boolean {
+/** Escape HTML entities to prevent XSS */
+function esc(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function isAuthed(c: Context): boolean {
   return getCookie(c, "admin_auth") === "1";
 }
 
@@ -47,7 +56,7 @@ adminApp.post("/login", async (c) => {
 adminApp.get("/", async (c) => {
   if (!isAuthed(c)) return c.redirect("/admin/login");
 
-  let reports: any[] = [];
+  let reports: Record<string, unknown>[] = [];
   try {
     const entries = await readdir(STORAGE_DIR);
     for (const entry of entries) {
@@ -59,7 +68,7 @@ adminApp.get("/", async (c) => {
     reports.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   } catch { /* empty */ }
 
-  let diagnostics: any[] = [];
+  let diagnostics: Record<string, unknown>[] = [];
   try {
     const entries = await readdir(DIAGNOSTICS_DIR);
     for (const entry of entries) {
@@ -73,11 +82,11 @@ adminApp.get("/", async (c) => {
 
   const rows = reports.map(r => `
     <tr>
-      <td>${new Date(r.timestamp).toLocaleString()}</td>
-      <td>Surah ${r.surah}, Ayah ${r.ayah}</td>
-      <td>${r.modelPrediction || "—"}</td>
-      <td>${r.notes ? r.notes.slice(0, 80) : "—"}</td>
-      <td><audio controls src="/api/reports/${r.id}/audio" preload="none"></audio></td>
+      <td>${esc(new Date(r.timestamp).toLocaleString())}</td>
+      <td>Surah ${Number(r.surah)}, Ayah ${Number(r.ayah)}</td>
+      <td>${r.modelPrediction ? esc(String(r.modelPrediction)) : "—"}</td>
+      <td>${r.notes ? esc(String(r.notes).slice(0, 80)) : "—"}</td>
+      <td><audio controls src="/api/reports/${esc(String(r.id))}/audio" preload="none"></audio></td>
     </tr>`).join("");
 
   const triggerLabel = (t: string) =>
@@ -85,10 +94,10 @@ adminApp.get("/", async (c) => {
 
   const diagRows = diagnostics.map(d => `
     <tr>
-      <td>${new Date(d.timestamp).toLocaleString()}</td>
-      <td><span class="trigger-badge trigger-${d.trigger}">${triggerLabel(d.trigger)}</span></td>
+      <td>${esc(new Date(d.timestamp).toLocaleString())}</td>
+      <td><span class="trigger-badge trigger-${esc(String(d.trigger))}">${esc(triggerLabel(d.trigger))}</span></td>
       <td>${Array.isArray(d.events) ? d.events.length : 0}</td>
-      <td>${d.hasAudio ? `<audio controls src="/api/diagnostics/${d.id}/audio" preload="none"></audio>` : "—"}</td>
+      <td>${d.hasAudio ? `<audio controls src="/api/diagnostics/${esc(String(d.id))}/audio" preload="none"></audio>` : "—"}</td>
     </tr>`).join("");
 
   return c.html(`<!DOCTYPE html>
