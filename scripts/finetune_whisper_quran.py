@@ -60,6 +60,7 @@ BASE_MODEL: str = os.getenv("BASE_MODEL", "openai/whisper-small")
 HUB_REPO: str = os.getenv("HUB_REPO", "tarteel-ai/whisper-small-quran-lora")
 EVERYAYAH_DATASET: str = "tarteel-ai/everyayah"
 RETASY_DATASET: str = "RetaSy/quranic_audio_dataset"
+TARTEEL_DATASET: str = "ashraf-ali/quran-data"  # 25k Tarteel.io user recordings (18k labeled)
 
 # LoRA hyperparameters
 LORA_R: int = int(os.getenv("LORA_R", "32"))
@@ -138,8 +139,10 @@ def load_and_prepare_datasets(
 ) -> DatasetDict:
     """Load, merge, and preprocess training datasets.
 
-    Primary dataset: tarteel-ai/everyayah (829h, 36 professional reciters)
-    Secondary dataset: RetaSy/quranic_audio_dataset (diverse non-professional)
+    Data sources (in priority order):
+    1. tarteel-ai/everyayah (829h, 36 professional reciters) — backbone accuracy
+    2. ashraf-ali/quran-data (25k Tarteel.io user recordings) — diversity/robustness
+    3. RetaSy/quranic_audio_dataset (7k non-Arabic speakers) — accent generalization
 
     Returns a DatasetDict with 'train' and 'validation' splits.
     """
@@ -164,6 +167,15 @@ def load_and_prepare_datasets(
         logger.info("RetaSy loaded: %s", {k: len(v) for k, v in retasy.items()})
     except Exception as e:
         logger.warning("Could not load RetaSy dataset (non-fatal): %s", e)
+
+    # Try loading Tarteel.io user recordings (25k in-the-wild phone recordings)
+    tarteel = None
+    try:
+        logger.info("Loading Tarteel.io dataset: %s", TARTEEL_DATASET)
+        tarteel = load_dataset(TARTEEL_DATASET, trust_remote_code=True)
+        logger.info("Tarteel loaded: %s", {k: len(v) for k, v in tarteel.items()})
+    except Exception as e:
+        logger.warning("Could not load Tarteel dataset (non-fatal): %s", e)
 
     # Determine audio and text column names (datasets may use different names)
     def detect_columns(dataset):
@@ -219,6 +231,40 @@ def load_and_prepare_datasets(
             val_datasets.append(("retasy", retasy["validation"], rt_audio_col, rt_text_col))
         elif "test" in retasy:
             val_datasets.append(("retasy", retasy["test"], rt_audio_col, rt_text_col))
+
+    # Tarteel.io user recordings (if available)
+    if tarteel is not None:
+        tt_audio_col, tt_text_col = detect_columns(tarteel)
+        logger.info("Tarteel columns: audio=%s, text=%s", tt_audio_col, tt_text_col)
+        if tt_audio_col:
+            for split in tarteel:
+                tarteel[split] = tarteel[split].cast_column(
+                    tt_audio_col, Audio(sampling_rate=SAMPLING_RATE)
+                )
+        # Tarteel data is the most valuable for diversity — in-the-wild phone
+        # recordings from 1200+ speakers of varying proficiency and accents.
+        # Use 90% for training, 10% for validation if no explicit splits.
+        if "train" in tarteel:
+            train_datasets.append(("tarteel", tarteel["train"], tt_audio_col, tt_text_col))
+        elif len(tarteel) == 1:
+            # Single split — do a 90/10 split
+            split_name = list(tarteel.keys())[0]
+            tarteel_split = tarteel[split_name].train_test_split(test_size=0.1, seed=42)
+            train_datasets.append(("tarteel", tarteel_split["train"], tt_audio_col, tt_text_col))
+            val_datasets.append(("tarteel", tarteel_split["test"], tt_audio_col, tt_text_col))
+        if "validation" in tarteel:
+            val_datasets.append(("tarteel", tarteel["validation"], tt_audio_col, tt_text_col))
+        elif "test" in tarteel:
+            val_datasets.append(("tarteel", tarteel["test"], tt_audio_col, tt_text_col))
+
+    logger.info(
+        "Dataset summary: %d train sources, %d val sources",
+        len(train_datasets), len(val_datasets),
+    )
+    for name, ds, acol, tcol in train_datasets:
+        logger.info("  Train: %s (%d samples, audio=%s, text=%s)", name, len(ds), acol, tcol)
+    for name, ds, acol, tcol in val_datasets:
+        logger.info("  Val:   %s (%d samples, audio=%s, text=%s)", name, len(ds), acol, tcol)
 
     # Preprocessing function factory
     feature_extractor = processor.feature_extractor
