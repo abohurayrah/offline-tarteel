@@ -257,7 +257,12 @@ export class RecitationTracker {
       // Before giving up, check if user jumped to a nearby verse
       // Apply hysteresis: during cooldown, require much higher score to switch
       // and never switch backward within same surah
-      if (this.staleCycles >= 2 && text.length >= 8 && this.trackingVerse) {
+      // Only consider verse jump if we've actually tracked some words of the current verse.
+      // Without this, a 2-word fragment can cause an immediate jump to the next verse.
+      const currentCoverage = this.trackingLastWordIdx >= 0
+        ? (this.trackingLastWordIdx + 1) / this.trackingVerseWords.length
+        : 0;
+      if (this.staleCycles >= 2 && text.length >= 8 && this.trackingVerse && currentCoverage >= 0.3) {
         const jumpHint: [number, number] = [this.trackingVerse.surah, this.trackingVerse.ayah];
         const jumpThreshold = this.transitionCooldown > 0 ? 0.7 : 0.5;
         const jumpMatch = this.db.matchVerseNarrow(text, jumpHint, 3, jumpThreshold);
@@ -382,7 +387,12 @@ export class RecitationTracker {
     }
 
     // Check if verse is complete
-    if (matchedIndices.length > 0) {
+    // Require at least 30% word coverage before considering advancement.
+    // This prevents jumping to the next verse after only tracking 1-2 words
+    // of a long verse (e.g. 13:13 has 19 words — matching 1 word near the end
+    // should not trigger advancement).
+    const wordCoverageRatio = matchedIndices.length / this.trackingVerseWords.length;
+    if (matchedIndices.length > 0 && wordCoverageRatio >= 0.3) {
       const cumulativeCoverage =
         (this.trackingLastWordIdx + 1) / this.trackingVerseWords.length;
       const nearEnd =
@@ -622,14 +632,14 @@ export class RecitationTracker {
       }
     }
 
-    // If transcript covers less than 30% of the verse's words, require higher confidence
-    if (match && match.text_words && matchWords.length < match.text_words.length * 0.3) {
-      const fragmentThreshold = 0.90;
-      if (match.score < fragmentThreshold) {
-        // Not confident enough — wait for more audio
-        messages.push({ type: "raw_transcript", text, confidence: Math.round(match.score * 100) / 100 });
-        return messages;
-      }
+    // If transcript covers less than 30% of the verse's words, don't lock in yet.
+    // Even high scores on tiny fragments are unreliable — a 2-word fragment of a
+    // 19-word verse can score 0.95 via substring matching but be completely wrong.
+    // Wait for more audio to accumulate.
+    if (match && match.text_words && match.text_words.length > 6 &&
+        matchWords.length < match.text_words.length * 0.3) {
+      messages.push({ type: "raw_transcript", text, confidence: Math.round(match.score * 100) / 100 });
+      return messages;
     }
 
     if (match && match.score >= effectiveThreshold) {
