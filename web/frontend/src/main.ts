@@ -312,9 +312,9 @@ async function handleMushafVerseMatch(msg: VerseMatchMessage): Promise<void> {
     }
   }
 
-  // Reveal the current verse — the user already read it (that's how we detected it)
-  mushafRevealVerse($mushafPage, msg.surah, msg.ayah);
-  state.revealedVerses.add(`${msg.surah}:${msg.ayah}`);
+  // DON'T reveal the current verse fully — let word_progress reveal words
+  // progressively as the tracker confirms each word. Only prior verses are
+  // fully revealed. The current verse shows word-by-word in practice mode.
 
   console.log(
     `[MUSHAF] State: page=${state.currentMushafPage}, revealed=${state.revealedVerses.size} verses, wordTracked=${_wordTrackedVerses.size}, practice=${state.practiceMode}`,
