@@ -3,6 +3,7 @@ import { RecitationTracker } from "../../src/lib/tracker.ts";
 import type { TranscribeResult } from "../../src/lib/tracker.ts";
 import { getFixtureQuranDB } from "../helpers/test-quran-db.ts";
 import {
+  SAMPLE_RATE,
   TRIGGER_SAMPLES,
   TRACKING_TRIGGER_SAMPLES,
   TRACKING_SILENCE_SAMPLES,
@@ -49,7 +50,7 @@ describe("RecitationTracker", () => {
     const tracker = new RecitationTracker(db, transcribe);
 
     // Feed enough silence to trigger a cycle
-    const msgs = await tracker.feed(silenceAudio(TRIGGER_SAMPLES));
+    const msgs = await tracker.feed(silenceAudio(SAMPLE_RATE * 5));
     expect(msgs).toEqual([]);
   });
 
@@ -71,7 +72,7 @@ describe("RecitationTracker", () => {
     const tracker = new RecitationTracker(db, transcribe);
 
     // Feed enough audio to trigger discovery
-    const msgs = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    const msgs = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
 
     // Should have at least one message
     const verseMatches = msgs.filter((m) => m.type === "verse_match");
@@ -106,7 +107,7 @@ describe("RecitationTracker", () => {
     const tracker = new RecitationTracker(db, transcribe);
 
     // Phase 1: trigger discovery → verse_match
-    let msgs = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    let msgs = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     const verseMatches = msgs.filter((m) => m.type === "verse_match");
     expect(verseMatches.length).toBeGreaterThanOrEqual(1);
 
@@ -136,7 +137,7 @@ describe("RecitationTracker", () => {
     const transcribe = createMockTranscriber(["xyzxyz abcabc defdef ghighi"]);
     const tracker = new RecitationTracker(db, transcribe);
 
-    const msgs = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    const msgs = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     const rawTranscripts = msgs.filter((m) => m.type === "raw_transcript");
     const verseMatches = msgs.filter((m) => m.type === "verse_match");
 
@@ -151,13 +152,13 @@ describe("RecitationTracker", () => {
     const tracker = new RecitationTracker(db, transcribe);
 
     // Feed enough to trigger a match
-    await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
 
     // Create a new tracker (reset is done by creating a new instance since
     // there's no public reset() method — verify the class can be re-instantiated)
     const tracker2 = new RecitationTracker(db, transcribe);
     // Feed silence — should produce nothing (clean state)
-    const msgs = await tracker2.feed(silenceAudio(TRIGGER_SAMPLES));
+    const msgs = await tracker2.feed(silenceAudio(SAMPLE_RATE * 5));
     expect(msgs).toEqual([]);
   });
 
@@ -184,7 +185,7 @@ describe("RecitationTracker", () => {
     const tracker = new RecitationTracker(db, transcribe);
 
     // Phase 1: discovery → verse_match for 1:1
-    let allMsgs = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    let allMsgs = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     const vm1 = allMsgs.filter((m) => m.type === "verse_match");
     expect(vm1.length).toBeGreaterThanOrEqual(1);
     expect(vm1[0]!.type === "verse_match" && vm1[0]!.surah === 1).toBe(true);
@@ -226,7 +227,7 @@ describe("RecitationTracker", () => {
     const tracker = new RecitationTracker(db, transcribe);
 
     // Discovery
-    let allMsgs = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    let allMsgs = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     const vm = allMsgs.filter((m) => m.type === "verse_match");
     expect(vm.length).toBeGreaterThanOrEqual(1);
 
@@ -264,7 +265,7 @@ describe("RecitationTracker", () => {
     const tracker = new RecitationTracker(db, transcribe);
 
     // Discovery: match 112:1
-    await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
 
     // Feed stale data — should eventually exit tracking (no verse_match or word_progress)
     // After STALE_CYCLE_LIMIT cycles of no progress, tracking exits
@@ -276,7 +277,7 @@ describe("RecitationTracker", () => {
     }
     // Tracker should have exited tracking after stale limit
     // On next discovery cycle with gibberish, should get raw_transcript
-    const msgs = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    const msgs = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     const rawOrMatch = msgs.filter(
       (m) => m.type === "raw_transcript" || m.type === "verse_match"
     );
@@ -307,7 +308,7 @@ describe("RecitationTracker", () => {
     const tracker = new RecitationTracker(db, transcribe);
 
     // Discovery
-    await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
 
     // Drive tracking to verse completion
     let emitted1_2 = false;
@@ -336,7 +337,7 @@ describe("RecitationTracker", () => {
     const transcribe = createMockTranscriber([v.text_norm!]);
     const tracker = new RecitationTracker(db, transcribe);
 
-    const msgs = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    const msgs = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     const vm = msgs.filter((m) => m.type === "verse_match");
     expect(vm.length).toBeGreaterThanOrEqual(1);
     if (vm[0]?.type === "verse_match") {
@@ -359,7 +360,7 @@ describe("RecitationTracker", () => {
     const tracker = new RecitationTracker(db, transcribe);
 
     // Discovery
-    await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
 
     // Feed silence in tracking mode — should eventually exit tracking
     for (let i = 0; i < 10; i++) {
@@ -372,7 +373,7 @@ describe("RecitationTracker", () => {
     // Now feed non-matching audio — should be back in discovery mode
     const gibberishTranscribe = createMockTranscriber(["xyzxyz abcabc defdef"]);
     const tracker2 = new RecitationTracker(db, gibberishTranscribe);
-    const msgs = await tracker2.feed(fakeAudio(TRIGGER_SAMPLES));
+    const msgs = await tracker2.feed(fakeAudio(SAMPLE_RATE * 5));
     // Back in discovery — gibberish produces raw_transcript
     const raw = msgs.filter((m) => m.type === "raw_transcript");
     expect(raw.length).toBeGreaterThanOrEqual(1);
@@ -387,7 +388,7 @@ describe("RecitationTracker", () => {
     const tracker = new RecitationTracker(db, transcribe);
 
     // First feed: should match 1:1
-    const msgs1 = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    const msgs1 = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     const vm1 = msgs1.filter((m) => m.type === "verse_match");
     expect(vm1.length).toBeGreaterThanOrEqual(1);
 
@@ -398,7 +399,7 @@ describe("RecitationTracker", () => {
 
     // Now back in discovery — same text should be deduped
     // The lastEmittedRef is still [1,1], so verse_match for 1:1 should be suppressed
-    const msgs2 = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    const msgs2 = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     const vm2 = msgs2.filter(
       (m) => m.type === "verse_match" && m.surah === 1 && m.ayah === 1
     );
@@ -429,7 +430,7 @@ describe("RecitationTracker", () => {
     const seenVerses = new Set<string>();
 
     // Discovery
-    let allMsgs = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    let allMsgs = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     for (const m of allMsgs) {
       if (m.type === "verse_match") {
         seenVerses.add(`${m.surah}:${m.ayah}`);
@@ -457,7 +458,7 @@ describe("RecitationTracker", () => {
     const transcribe = createMockTranscriber(["بسم الله الرحمن الرحيم"]);
     const tracker = new RecitationTracker(db, transcribe);
 
-    const msgs = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    const msgs = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     const candidates = msgs.filter((m) => m.type === "candidate_list");
     // May or may not produce candidate_list depending on internal logic
     // The key thing is it doesn't crash and verse_match is still emitted
@@ -472,7 +473,7 @@ describe("RecitationTracker", () => {
     const tracker = new RecitationTracker(db, transcribe);
 
     // Should not crash — just produces no output
-    const msgs = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    const msgs = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     // Short text is filtered out in _handleDiscovery
     expect(msgs).toBeDefined();
   });
@@ -483,17 +484,17 @@ describe("RecitationTracker", () => {
 
     // Create and use first tracker
     const tracker1 = new RecitationTracker(db, transcribe);
-    await tracker1.feed(fakeAudio(TRIGGER_SAMPLES));
+    await tracker1.feed(fakeAudio(SAMPLE_RATE * 5));
 
     // Create a completely fresh tracker
     const tracker2 = new RecitationTracker(db, transcribe);
 
     // Feed silence — clean state means no messages
-    const msgs = await tracker2.feed(silenceAudio(TRIGGER_SAMPLES));
+    const msgs = await tracker2.feed(silenceAudio(SAMPLE_RATE * 5));
     expect(msgs).toEqual([]);
 
     // Feed audio — should work independently
-    const msgs2 = await tracker2.feed(fakeAudio(TRIGGER_SAMPLES));
+    const msgs2 = await tracker2.feed(fakeAudio(SAMPLE_RATE * 5));
     const vm = msgs2.filter((m) => m.type === "verse_match");
     expect(vm.length).toBeGreaterThanOrEqual(1);
   });
@@ -520,7 +521,7 @@ describe("RecitationTracker", () => {
     const transcribe = createMockTranscriber(["بسم الله الرحمن الرحيم"]);
     const tracker = new RecitationTracker(db, transcribe);
 
-    const msgs = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    const msgs = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     const vm = msgs.find((m) => m.type === "verse_match");
     expect(vm).toBeDefined();
     if (vm?.type === "verse_match") {
@@ -539,7 +540,7 @@ describe("RecitationTracker", () => {
     const transcribe = createMockTranscriber(["ان الانسن لفي خسر"]);
     const tracker = new RecitationTracker(db, transcribe);
 
-    const msgs = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    const msgs = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     const vm = msgs.find((m) => m.type === "verse_match");
     expect(vm).toBeDefined();
     if (vm?.type === "verse_match") {
@@ -556,7 +557,7 @@ describe("RecitationTracker", () => {
     const transcribe = createMockTranscriber(["بسم الله"]);
     const tracker = new RecitationTracker(db, transcribe);
 
-    const msgs = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    const msgs = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     const verseMatches = msgs.filter((m) => m.type === "verse_match");
     // Should NOT emit verse_match — too few words for first discovery
     expect(verseMatches.length).toBe(0);
@@ -576,7 +577,7 @@ describe("RecitationTracker", () => {
     const transcribe = createMockTranscriber([v.text_norm!]);
     const tracker = new RecitationTracker(db, transcribe);
 
-    const msgs = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    const msgs = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     const verseMatches = msgs.filter((m) => m.type === "verse_match");
     // text_norm for 1:1 is "بسم الله الرحمن الرحيم" which is exactly 4 words
     // MIN_DISCOVERY_WORDS is 4, so >= 4 words should pass
@@ -604,7 +605,7 @@ describe("RecitationTracker", () => {
     const tracker = new RecitationTracker(db, transcribe);
 
     // First feed: should match (4 words, passes gate)
-    const msgs1 = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    const msgs1 = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     const vm1 = msgs1.filter((m) => m.type === "verse_match");
     expect(vm1.length).toBeGreaterThanOrEqual(1);
     // After this, hasEverMatched should be true
@@ -625,7 +626,7 @@ describe("RecitationTracker", () => {
     const transcribe = createMockTranscriber(["يس"]);
     const tracker = new RecitationTracker(db, transcribe);
 
-    const msgs = await tracker.feed(fakeAudio(TRIGGER_SAMPLES));
+    const msgs = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     // The match score for a single "يس" against the full DB likely won't be
     // >= 0.95 (since 36:1 includes bismillah), so this should produce either
     // raw_transcript or nothing — but importantly it should NOT crash.

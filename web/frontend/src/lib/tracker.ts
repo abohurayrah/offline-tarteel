@@ -463,10 +463,11 @@ export class RecitationTracker {
   private async _handleDiscovery(): Promise<WorkerOutbound[]> {
     const messages: WorkerOutbound[] = [];
 
-    // Adaptive trigger: first attempt after 2.0s, then standard 3s
-    // This reduces time-to-first-match without sacrificing accuracy on retries
+    // Adaptive trigger: first attempt after 5.0s to capture a full verse,
+    // then standard 3s for subsequent cycles.
+    // FastConformer needs substantial audio context for good transcription.
     const triggerThreshold = !this.hasEverMatched && this.cyclesSinceEmit === Infinity
-      ? Math.floor(SAMPLE_RATE * 2.0)
+      ? Math.floor(SAMPLE_RATE * 5.0)
       : TRIGGER_SAMPLES;
     if (this.newAudioCount < triggerThreshold) return messages;
     this.newAudioCount = 0;
