@@ -76,38 +76,47 @@ async function transcribe(audio: Float32Array): Promise<TranscribeResult> {
   if (faAligner && faVerse) {
     try {
       const { newWords, currentWordIdx } = faAligner.processFrames(logprobs, timeSteps);
-      // Emit word_aligned for each newly confirmed word
+
+      // Only emit word_aligned for words with meaningful confidence
       for (const w of newWords) {
-        post({
-          type: "word_aligned",
-          surah: faVerse.surah,
-          ayah: faVerse.ayah,
-          word_index: w.wordIdx,
-          total_words: faAligner.totalWords,
-          confidence: w.confidence,
-          cumulative_indices: Array.from(
-            { length: w.wordIdx + 1 },
-            (_, i) => i,
-          ),
-        });
+        if (w.confidence > 0.1 && !isNaN(w.confidence)) {
+          post({
+            type: "word_aligned",
+            surah: faVerse.surah,
+            ayah: faVerse.ayah,
+            word_index: w.wordIdx,
+            total_words: faAligner.totalWords,
+            confidence: w.confidence,
+            cumulative_indices: Array.from(
+              { length: w.wordIdx + 1 },
+              (_, i) => i,
+            ),
+          });
+        }
       }
-      // Check verse completion
-      if (currentWordIdx >= faAligner.totalWords - 1) {
-        const allWords = faAligner.finalize();
-        const nextV = db?.getNextVerse(faVerse.surah, faVerse.ayah);
-        post({
-          type: "verse_complete",
-          surah: faVerse.surah,
-          ayah: faVerse.ayah,
-          overall_score: allWords.reduce((s, w) => s + w.confidence, 0) / allWords.length,
-          word_scores: allWords.map((w) => w.confidence),
-          next_surah: nextV?.surah ?? faVerse.surah,
-          next_ayah: nextV?.ayah ?? faVerse.ayah + 1,
-        });
-        // Reset aligner for next verse
-        if (nextV) {
-          startForcedAlignment(nextV.surah, nextV.ayah);
-        } else {
+
+      // Check verse completion — require meaningful confidence, not just position
+      // The FA can report high currentWordIdx on garbage audio; guard against that
+      if (currentWordIdx >= faAligner.totalWords - 1 && newWords.length > 0) {
+        const avgConf = newWords.reduce((s, w) => s + w.confidence, 0) / newWords.length;
+        if (avgConf > 0.3 && !isNaN(avgConf)) {
+          const allWords = faAligner.finalize();
+          const overallScore = allWords.reduce((s, w) => s + w.confidence, 0) / allWords.length;
+          if (!isNaN(overallScore) && overallScore > 0.2) {
+            const nextV = db?.getNextVerse(faVerse.surah, faVerse.ayah);
+            post({
+              type: "verse_complete",
+              surah: faVerse.surah,
+              ayah: faVerse.ayah,
+              overall_score: overallScore,
+              word_scores: allWords.map((w) => w.confidence),
+              next_surah: nextV?.surah ?? faVerse.surah,
+              next_ayah: nextV?.ayah ?? faVerse.ayah + 1,
+            });
+          }
+          // Don't auto-advance FA to next verse — let the tracker handle
+          // verse transitions via verse_match. Starting FA on a verse the
+          // tracker hasn't confirmed causes cascading false completions.
           faAligner = null;
           faVerse = null;
         }
