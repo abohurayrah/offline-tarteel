@@ -52,6 +52,17 @@
             <line x1="1" y1="1" x2="23" y2="23" />
           </svg>
         </button>
+        <button id="btn-algo-view" class="mc-btn" title="Algorithm View">
+          <!-- Filter/funnel icon for narrowing visualization -->
+          <svg class="algo-icon algo-icon--off" width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+          </svg>
+          <svg class="algo-icon algo-icon--on" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"
+            stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+          </svg>
+        </button>
         <button id="btn-rec-toggle" class="mc-btn mc-btn--rec" title="Start recitation">
           <svg class="rec-icon rec-icon--mic" width="22" height="22" viewBox="0 0 24 24" fill="none"
             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -66,10 +77,32 @@
         </button>
       </div>
     </div>
+    <div id="algorithm-view" hidden>
+      <div class="av-section av-transcript">
+        <div class="av-section-label">Raw Transcript</div>
+        <div id="av-transcript-text" class="av-transcript-text" dir="rtl" lang="ar"></div>
+      </div>
+      <div class="av-section av-narrowing">
+        <div class="av-section-label">Candidate Narrowing</div>
+        <div id="av-narrowing-cascade" class="av-narrowing-cascade"></div>
+      </div>
+      <div class="av-section av-candidates">
+        <div class="av-section-label">Top Candidates</div>
+        <div id="av-candidate-list" class="av-candidate-list"></div>
+      </div>
+      <div class="av-section av-disambig">
+        <div id="av-disambig-info" class="av-disambig-info"></div>
+      </div>
+      <div id="av-identified" class="av-section av-identified" hidden>
+        <div class="av-identified-badge">IDENTIFIED</div>
+        <div id="av-identified-ref" class="av-identified-ref"></div>
+        <div id="av-identified-text" class="av-identified-text" dir="rtl" lang="ar"></div>
+        <div id="av-identified-stats" class="av-identified-stats"></div>
+      </div>
+    </div>
     <div id="candidate-list"></div>
     <div id="post-recording" hidden>
       <div class="post-actions">
-        <button id="btn-report" class="action-btn action-btn--report">Report Error</button>
         <button id="btn-restart" class="action-btn action-btn--restart">Start Again</button>
       </div>
     </div>
@@ -98,41 +131,7 @@
       Open source
     </a>
 
-    <dialog id="report-dialog">
-      <div class="dialog-content">
-        <h2 class="dialog-title">Report Error</h2>
-
-        <div class="dialog-section">
-          <label class="dialog-label">Your recording</label>
-          <audio id="report-audio" controls></audio>
-        </div>
-
-        <div class="dialog-section">
-          <label class="dialog-label">What were you reciting?</label>
-          <div class="verse-selectors">
-            <select id="report-surah"></select>
-            <select id="report-ayah"></select>
-          </div>
-        </div>
-
-        <div class="dialog-section">
-          <label class="dialog-label">Model predicted</label>
-          <p id="report-prediction" class="prediction-text"></p>
-        </div>
-
-        <div class="dialog-section">
-          <label class="dialog-label">Notes (optional)</label>
-          <textarea id="report-notes" rows="3" placeholder="Describe the issue..."></textarea>
-        </div>
-
-        <div class="dialog-actions">
-          <button id="btn-submit-report" class="action-btn action-btn--report">Submit</button>
-          <button id="btn-cancel-report" class="action-btn action-btn--restart">Cancel</button>
-        </div>
-
-        <p id="report-status" class="report-status" hidden></p>
-      </div>
-    </dialog>
+    <!-- Feedback UI is dynamically created by feedback.ts -->
   </div>
   <script type="module" src="/src/main.ts"></script>
 </body>

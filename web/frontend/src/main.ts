@@ -3,8 +3,9 @@ import "@fontsource/amiri/700.css";
 import "@fontsource/amiri-quran/400.css";
 import "./style.css";
 
-import { initSurahDropdown, openReportDialog } from "./report-dialog";
+import { initFeedback, showWrongButton, hideWrongButton } from "./feedback";
 import { encodeWav } from "./lib/wav-encoder";
+import { QuranDB } from "./lib/quran-db";
 
 import type {
   VerseMatchMessage,
@@ -82,6 +83,7 @@ const state = {
   quranData: null as QuranVerse[] | null,
   sessionAudioChunks: [] as Float32Array[],
   lastModelPrediction: null as { surah: number; ayah: number; confidence: number } | null,
+  lastCandidates: [] as { surah: number; ayah: number; score: number; surah_name: string; surah_name_en: string; text_preview: string }[],
   diagnosticEvents: [] as DiagnosticEvent[],
   lastDiagnosticSentAt: 0,
   recentVerseMatches: [] as { surah: number; ayah: number; timestamp: number }[],
@@ -97,6 +99,24 @@ const state = {
   revealedVerses: new Set<string>(),
   mushafDataReady: false,
   lastVerseTransitionTime: 0,
+  // Algorithm view
+  algorithmMode: false,
+  algorithmDB: null as QuranDB | null,
+  algorithmDBReady: false,
+  /** Narrowing cascade history for current recognition cycle */
+  narrowingHistory: [] as { word: string; count: number }[],
+  /** Timestamp when the current algorithm cycle started */
+  algorithmCycleStart: 0,
+  /** Last identified verse info for the algorithm view */
+  algorithmIdentified: null as {
+    surah: number;
+    ayah: number;
+    surahName: string;
+    confidence: number;
+    wordsNeeded: number;
+    timeMs: number;
+    text: string;
+  } | null,
 };
 
 // ---------------------------------------------------------------------------
@@ -112,11 +132,21 @@ const $loadingProgress = document.getElementById("loading-progress")!;
 const $loadingDetail = document.getElementById("loading-detail")!;
 const $postRecording = document.getElementById("post-recording")!;
 const $btnRecToggle = document.getElementById("btn-rec-toggle")!;
-const $btnReport = document.getElementById("btn-report")!;
 const $btnRestart = document.getElementById("btn-restart")!;
 const $btnPractice = document.getElementById("btn-practice")!;
 const $candidateList = document.getElementById("candidate-list")!;
 const $app = document.getElementById("app")!;
+// Algorithm view
+const $algorithmView = document.getElementById("algorithm-view")!;
+const $avTranscriptText = document.getElementById("av-transcript-text")!;
+const $avNarrowingCascade = document.getElementById("av-narrowing-cascade")!;
+const $avCandidateList = document.getElementById("av-candidate-list")!;
+const $avDisambigInfo = document.getElementById("av-disambig-info")!;
+const $avIdentified = document.getElementById("av-identified")!;
+const $avIdentifiedRef = document.getElementById("av-identified-ref")!;
+const $avIdentifiedText = document.getElementById("av-identified-text")!;
+const $avIdentifiedStats = document.getElementById("av-identified-stats")!;
+const $btnAlgoView = document.getElementById("btn-algo-view")!;
 // Mushaf page mode
 const $mushafContainer = document.getElementById("mushaf-container")!;
 const $mushafPage = document.getElementById("mushaf-page")!;
@@ -143,7 +173,7 @@ async function loadQuranData(): Promise<void> {
   const res = await fetch("/quran.json");
   if (!res.ok) throw new Error(`Failed to load Quran data (HTTP ${res.status})`);
   state.quranData = await res.json();
-  initSurahDropdown(state.quranData!);
+  initFeedback(state.quranData!);
 }
 
 async function fetchSurah(surahNum: number): Promise<SurahData> {
@@ -918,6 +948,12 @@ function handleRawTranscript(msg: RawTranscriptMessage): void {
       transcriptEl.textContent = `"${msg.text}"`;
     }
   }
+
+  // Algorithm view: update transcript and narrowing cascade
+  if (state.algorithmMode) {
+    updateAlgoTranscript(msg.text);
+    updateAlgoNarrowing(msg.text);
+  }
 }
 
 /** Render the "Listening..." state in the candidate status bar */
@@ -1065,6 +1101,16 @@ function handleCandidateList(msg: CandidateListMessage): void {
   }
 
   container.classList.add("visible");
+
+  // Algorithm view: update candidates
+  if (state.algorithmMode && msg.candidates.length > 0) {
+    updateAlgoCandidates(msg.candidates);
+    // Also update narrowing cascade from transcript if available
+    const transcript = msg.transcript || state.lastRawTranscript;
+    if (transcript) {
+      updateAlgoNarrowing(transcript);
+    }
+  }
 }
 
 /** Handle tapping a candidate -- navigate to that verse's page and enter tracking */
@@ -1138,6 +1184,282 @@ function renderCandidateMatched(surahNameEn: string, surah: number, ayah: number
       $candidateList.className = "";
     }, 400);
   }, 2000);
+}
+
+// ---------------------------------------------------------------------------
+// Algorithm View — main-thread QuranDB + visualization
+// ---------------------------------------------------------------------------
+
+/** Load a QuranDB instance on the main thread for algorithm view queries */
+async function loadAlgorithmDB(): Promise<void> {
+  if (state.algorithmDBReady) return;
+
+  await loadQuranData();
+  const db = new QuranDB(state.quranData!);
+
+  // Load disambiguation map
+  try {
+    const res = await fetch("/ambiguity-compact.json");
+    if (res.ok) {
+      const disambigData = await res.json();
+      db.loadDisambiguationMap(disambigData);
+    }
+  } catch {
+    console.warn("[ALGO_VIEW] ambiguity-compact.json not available");
+  }
+
+  state.algorithmDB = db;
+  state.algorithmDBReady = true;
+}
+
+/** Toggle algorithm view on/off */
+function toggleAlgorithmView(): void {
+  state.algorithmMode = !state.algorithmMode;
+  $app.classList.toggle("algorithm-mode", state.algorithmMode);
+
+  if (state.algorithmMode) {
+    $algorithmView.hidden = false;
+    $mushafContainer.querySelector(".mushaf-page-wrap")?.classList.add("av-hidden");
+    $mushafContainer.querySelector(".mushaf-nav")?.classList.add("av-hidden");
+    clearAlgorithmView();
+  } else {
+    $algorithmView.hidden = true;
+    $mushafContainer.querySelector(".mushaf-page-wrap")?.classList.remove("av-hidden");
+    $mushafContainer.querySelector(".mushaf-nav")?.classList.remove("av-hidden");
+  }
+}
+
+/** Clear all algorithm view state for a new cycle */
+function clearAlgorithmView(): void {
+  state.narrowingHistory = [];
+  state.algorithmIdentified = null;
+  state.algorithmCycleStart = Date.now();
+  $avTranscriptText.textContent = "";
+  $avNarrowingCascade.innerHTML = "";
+  $avCandidateList.innerHTML = "";
+  $avDisambigInfo.textContent = "";
+  $avIdentified.hidden = true;
+}
+
+/** Update the algorithm view transcript display */
+function updateAlgoTranscript(text: string): void {
+  if (!state.algorithmMode) return;
+  $avTranscriptText.textContent = text || "";
+
+  // When we get a new transcript, start the cycle timer if not already started
+  if (state.algorithmCycleStart === 0) {
+    state.algorithmCycleStart = Date.now();
+  }
+}
+
+/** Normalize Arabic text (same as QuranDB) for prefix trie queries */
+function normalizeForTrie(text: string): string {
+  let t = text.replace(/\u2581/g, " ");
+  t = t.replace(/\uFEFF/g, "");
+  t = t.replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g, "");
+  t = t.replace(/[أإآٱ]/g, "ا");
+  t = t.replace(/ة/g, "ه");
+  t = t.replace(/ى/g, "ي");
+  t = t.replace(/ـ/g, "");
+  t = t.replace(/[،؟.!:]/g, "");
+  t = t.replace(/\s+/g, " ").trim();
+  return t;
+}
+
+/** Update the narrowing cascade visualization */
+function updateAlgoNarrowing(transcript: string): void {
+  if (!state.algorithmMode || !state.algorithmDB) return;
+
+  const normalized = normalizeForTrie(transcript);
+  const words = normalized.split(" ").filter(Boolean);
+  if (words.length === 0) return;
+
+  const cascade = state.algorithmDB.prefixNarrowingCascade(words);
+  if (cascade.length === 0) return;
+
+  // Only update if cascade has changed
+  const cascadeChanged = cascade.length !== state.narrowingHistory.length ||
+    cascade.some((c, i) => state.narrowingHistory[i]?.count !== c.count);
+  if (!cascadeChanged) return;
+  state.narrowingHistory = cascade;
+
+  // Rebuild cascade display
+  $avNarrowingCascade.innerHTML = "";
+
+  for (let i = 0; i < cascade.length; i++) {
+    const step = cascade[i];
+    const row = document.createElement("div");
+    row.className = "av-narrow-row";
+    if (i === cascade.length - 1) row.classList.add("av-narrow-row--latest");
+
+    // Animate new rows sliding in
+    row.style.animationDelay = `${i * 50}ms`;
+
+    const wordNum = document.createElement("span");
+    wordNum.className = "av-narrow-word-num";
+    wordNum.textContent = `Word ${i + 1}:`;
+
+    const wordText = document.createElement("span");
+    wordText.className = "av-narrow-word-text";
+    wordText.dir = "rtl";
+    wordText.lang = "ar";
+    wordText.textContent = `"${step.word}"`;
+
+    const arrow = document.createElement("span");
+    arrow.className = "av-narrow-arrow";
+    arrow.textContent = "\u2192";
+
+    const count = document.createElement("span");
+    count.className = "av-narrow-count";
+    if (step.count === 1) {
+      count.classList.add("av-narrow-count--unique");
+      count.textContent = "1 candidate \u2713";
+    } else {
+      count.textContent = `${step.count} candidates`;
+    }
+
+    row.appendChild(wordNum);
+    row.appendChild(wordText);
+    row.appendChild(arrow);
+    row.appendChild(count);
+    $avNarrowingCascade.appendChild(row);
+  }
+
+  // Auto-scroll to bottom of cascade
+  $avNarrowingCascade.scrollTop = $avNarrowingCascade.scrollHeight;
+}
+
+/** Update the top candidates visualization */
+function updateAlgoCandidates(candidates: { surah: number; ayah: number; score: number; surah_name_en: string; text_preview: string }[]): void {
+  if (!state.algorithmMode) return;
+
+  $avCandidateList.innerHTML = "";
+
+  if (candidates.length === 0) return;
+
+  const topScore = candidates[0].score;
+  const shown = candidates.slice(0, 5);
+
+  for (let i = 0; i < shown.length; i++) {
+    const c = shown[i];
+    const row = document.createElement("div");
+    row.className = "av-candidate-row";
+    if (i === 0) row.classList.add("av-candidate-row--top");
+
+    const ref = document.createElement("span");
+    ref.className = "av-candidate-ref";
+    ref.textContent = `${c.surah_name_en} ${c.surah}:${c.ayah}`;
+
+    const bar = document.createElement("div");
+    bar.className = "av-candidate-bar";
+
+    const fill = document.createElement("div");
+    fill.className = "av-candidate-bar-fill";
+    const pct = Math.round(c.score * 100);
+    fill.style.width = `${pct}%`;
+    bar.appendChild(fill);
+
+    const score = document.createElement("span");
+    score.className = "av-candidate-score";
+    score.textContent = `${pct}%`;
+
+    const indicator = document.createElement("span");
+    indicator.className = "av-candidate-indicator";
+    if (i === 0 && c.score > 0.7) {
+      indicator.textContent = "\u2190 most likely";
+      indicator.classList.add("av-candidate-indicator--likely");
+    }
+
+    row.appendChild(ref);
+    row.appendChild(bar);
+    row.appendChild(score);
+    row.appendChild(indicator);
+    $avCandidateList.appendChild(row);
+  }
+
+  // Update disambiguation info for the top candidate
+  updateAlgoDisambig(shown[0].surah, shown[0].ayah);
+}
+
+/** Update disambiguation info for a verse */
+function updateAlgoDisambig(surah: number, ayah: number): void {
+  if (!state.algorithmMode || !state.algorithmDB) return;
+
+  const db = state.algorithmDB;
+  const disambigLen = db.getDisambiguationLength(surah, ayah);
+  const isAmbiguous = db.isAmbiguousInIsolation(surah, ayah);
+  const entry = db.getDisambiguationEntry(surah, ayah);
+
+  if (isAmbiguous && entry) {
+    // Count how many verses share this opening
+    const confuserCount = entry.c.length;
+    $avDisambigInfo.innerHTML = "";
+
+    const warning = document.createElement("span");
+    warning.className = "av-disambig-warning";
+    warning.textContent = "\u26A0\uFE0F";
+
+    const text = document.createElement("span");
+    text.textContent = ` This verse shares its opening with ${confuserCount} other verse${confuserCount !== 1 ? "s" : ""} \u2014 needs boundary context`;
+
+    $avDisambigInfo.appendChild(warning);
+    $avDisambigInfo.appendChild(text);
+    $avDisambigInfo.className = "av-disambig-info av-disambig-info--warning";
+  } else if (disambigLen > 0) {
+    $avDisambigInfo.innerHTML = "";
+
+    const icon = document.createElement("span");
+    icon.className = "av-disambig-icon";
+    icon.textContent = "\u2139\uFE0F";
+
+    const text = document.createElement("span");
+    text.textContent = ` This verse needs ${disambigLen} word${disambigLen !== 1 ? "s" : ""} to identify (paper average: 3.11)`;
+
+    $avDisambigInfo.appendChild(icon);
+    $avDisambigInfo.appendChild(text);
+    $avDisambigInfo.className = "av-disambig-info av-disambig-info--info";
+  } else {
+    $avDisambigInfo.textContent = "";
+    $avDisambigInfo.className = "av-disambig-info";
+  }
+}
+
+/** Show the identified state in algorithm view */
+function showAlgoIdentified(msg: VerseMatchMessage): void {
+  if (!state.algorithmMode || !state.algorithmDB) return;
+
+  const timeMs = state.algorithmCycleStart > 0
+    ? Date.now() - state.algorithmCycleStart
+    : 0;
+
+  const db = state.algorithmDB;
+  const disambigLen = db.getDisambiguationLength(msg.surah, msg.ayah);
+  const wordsNeeded = disambigLen > 0 ? disambigLen : -1;
+
+  state.algorithmIdentified = {
+    surah: msg.surah,
+    ayah: msg.ayah,
+    surahName: msg.surah_name,
+    confidence: msg.confidence,
+    wordsNeeded,
+    timeMs,
+    text: msg.verse_text,
+  };
+
+  $avIdentified.hidden = false;
+  $avIdentifiedRef.textContent = `${msg.surah_name} ${msg.surah}:${msg.ayah}`;
+
+  // Show verse text (truncated for display)
+  const displayText = msg.verse_text.length > 120
+    ? msg.verse_text.slice(0, 120) + "\u2026"
+    : msg.verse_text;
+  $avIdentifiedText.textContent = displayText;
+
+  // Stats line
+  const confPct = Math.round(msg.confidence * 100);
+  const timeSec = (timeMs / 1000).toFixed(1);
+  const wordsStr = wordsNeeded > 0 ? `${wordsNeeded}` : "n/a";
+  $avIdentifiedStats.textContent = `Confidence: ${confPct}% | Words needed: ${wordsStr} | Time: ${timeSec}s`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1267,6 +1589,18 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
       surah: msg.surah, ayah: msg.ayah, confidence: msg.confidence,
     });
     checkAnomalyAndSend(msg);
+    // Algorithm view: show identified state
+    if (state.algorithmMode) {
+      showAlgoIdentified(msg);
+    }
+    // Show "Wrong?" feedback button
+    showWrongButton({
+      audioChunks: state.sessionAudioChunks,
+      transcript: state.lastRawTranscript,
+      matched: { surah: msg.surah, ayah: msg.ayah, confidence: msg.confidence },
+      candidates: state.lastCandidates,
+      quranData: state.quranData!,
+    });
     // Route to mushaf mode or flowing mode
     if (state.mushafDataReady) {
       handleMushafVerseMatch(msg);
@@ -1301,6 +1635,10 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
       );
     }
     handleCandidateList(msg);
+    // Store candidates for feedback reporting
+    if (msg.candidates.length > 0) {
+      state.lastCandidates = msg.candidates;
+    }
   } else if (msg.type === "word_aligned") {
     // Forced Alignment: word confirmed with confidence
     if (state.mushafDataReady) {
@@ -1463,6 +1801,20 @@ document.addEventListener("DOMContentLoaded", () => {
       console.warn("Mushaf data not available, using flowing mode:", err),
     );
 
+  // Algorithm view toggle
+  $btnAlgoView.addEventListener("click", async () => {
+    // Ensure the algorithm DB is loaded before toggling
+    if (!state.algorithmDBReady) {
+      await loadAlgorithmDB();
+    }
+    toggleAlgorithmView();
+  });
+
+  // Load algorithm DB in background (low priority, after mushaf data)
+  loadAlgorithmDB().catch((err) =>
+    console.warn("Algorithm DB not available:", err),
+  );
+
   // Practice mode toggle (applies to both mushaf and flowing)
   $btnPractice.addEventListener("click", () => {
     state.practiceMode = !state.practiceMode;
@@ -1539,6 +1891,8 @@ document.addEventListener("DOMContentLoaded", () => {
       state.hasFirstMatch = false;
       state.diagnosticEvents = [];
       state.recentVerseMatches = [];
+      state.lastCandidates = [];
+      hideWrongButton();
       // Reset per-event accumulators but keep verse-level tracking
       _mushafMatchedWords = new Set<number>();
       _mushafTrackingKey = "";
@@ -1552,6 +1906,11 @@ document.addEventListener("DOMContentLoaded", () => {
       $rawTranscript.classList.remove("visible");
       $postRecording.hidden = true;
       state.lastRawTranscript = "";
+
+      // Clear algorithm view for new recording session
+      if (state.algorithmMode) {
+        clearAlgorithmView();
+      }
 
       if (state.mushafDataReady) {
         $mushafContainer.hidden = false;
@@ -1588,6 +1947,8 @@ document.addEventListener("DOMContentLoaded", () => {
       $btnRecToggle.title = "Start recitation";
 
       // Keep practice mode and mushaf visible so user sees their progress
+      // Hide feedback button
+      hideWrongButton();
       // Clear candidate bar and any pending fade timers
       if (state.candidateMatchFadeTimer) {
         clearTimeout(state.candidateMatchFadeTimer);
@@ -1604,8 +1965,10 @@ document.addEventListener("DOMContentLoaded", () => {
     state.sessionAudioChunks = [];
     state.lastModelPrediction = null;
     state.hasFirstMatch = false;
+    state.lastCandidates = [];
     state.groups = [];
     state.revealedVerses = new Set<string>();
+    hideWrongButton();
     // Reset mushaf tracking state
     _wordTrackedVerses.clear();
     _priorRevealDoneForPage = 0;
@@ -1645,11 +2008,4 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  $btnReport.addEventListener("click", () => {
-    openReportDialog({
-      audioChunks: state.sessionAudioChunks,
-      modelPrediction: state.lastModelPrediction,
-      quranData: state.quranData!,
-    });
-  });
 });

@@ -1149,105 +1149,386 @@ body {
   flex-shrink: 0;
 }
 
-/* ── Report dialog ── */
-#report-dialog {
-  border: none;
-  border-radius: 12px;
-  padding: 0;
-  max-width: 480px;
-  width: calc(100% - 2rem);
-  margin: auto;
+/* ── Feedback: "Wrong?" pill button ── */
+.feedback-wrong-btn {
+  position: fixed;
+  bottom: calc(5rem + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%) scale(0.9);
+  z-index: 900;
+  font-family: var(--font-system);
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--accent-gold);
+  background: transparent;
+  border: 1.5px solid var(--accent-gold);
+  border-radius: 20px;
+  padding: 0.4rem 1.2rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.4s ease, transform 0.3s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.feedback-wrong-btn--visible {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
+
+.feedback-wrong-btn--hiding {
+  opacity: 0;
+  transform: translateX(-50%) scale(0.9);
+}
+
+.feedback-wrong-btn:active {
+  transform: translateX(-50%) scale(0.95);
+  background: var(--accent-warm);
+}
+
+/* ── Feedback: dark overlay ── */
+.feedback-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.feedback-overlay--visible {
+  opacity: 1;
+}
+
+/* ── Feedback: slide-up panel ── */
+.feedback-panel {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1001;
+  max-height: 60vh;
   background: var(--bg);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-  max-height: calc(100dvh - 2rem);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.15);
+  transform: translateY(100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
-#report-dialog::backdrop {
-  background: rgba(244, 242, 236, 0.8);
-  backdrop-filter: blur(6px);
+.feedback-panel--visible {
+  transform: translateY(0);
 }
 
-.dialog-content {
-  padding: 1.5rem;
+.feedback-panel-handle {
+  width: 36px;
+  height: 4px;
+  background: var(--text-faint);
+  border-radius: 2px;
+  margin: 0.75rem auto 0;
 }
 
-.dialog-title {
+.feedback-panel-content {
+  padding: 1rem 1.25rem 1.5rem;
+}
+
+.feedback-title {
   font-family: var(--font-system);
-  font-size: 1.2rem;
+  font-size: 1.1rem;
   font-weight: 600;
   color: var(--text);
-  margin-bottom: 1.25rem;
-}
-
-.dialog-section {
   margin-bottom: 1rem;
 }
 
-.dialog-label {
-  display: block;
+/* ── Feedback: captured info section ── */
+.feedback-section {
+  margin-bottom: 1rem;
+}
+
+.feedback-label {
   font-family: var(--font-system);
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
   margin-bottom: 0.4rem;
 }
 
-.verse-selectors {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.verse-selectors select {
-  flex: 1;
-  padding: 0.5rem;
-  border: 1px solid rgba(194, 160, 91, 0.3);
-  border-radius: 6px;
-  background: var(--bg-warm);
-  font-family: var(--font-system);
-  font-size: 0.9rem;
-  color: var(--text);
-}
-
-.prediction-text {
-  font-family: var(--font-system);
-  font-size: 0.9rem;
-  color: var(--text-light);
+.feedback-optional {
+  text-transform: none;
+  letter-spacing: normal;
   font-style: italic;
+  color: var(--text-faint);
 }
 
-#report-notes {
-  width: 100%;
-  padding: 0.5rem;
-  border: 1px solid rgba(194, 160, 91, 0.3);
-  border-radius: 6px;
-  background: var(--bg-warm);
-  font-family: var(--font-system);
-  font-size: 0.9rem;
-  color: var(--text);
-  resize: vertical;
+.feedback-captured {
+  background: var(--accent-warm);
+  border-radius: 8px;
+  padding: 0.75rem;
 }
 
-#report-audio {
-  width: 100%;
-  height: 40px;
-}
-
-.dialog-actions {
+.feedback-captured-row {
   display: flex;
-  gap: 0.75rem;
-  justify-content: flex-end;
-  margin-top: 1.25rem;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
 }
 
-.report-status {
+.feedback-captured-row:last-child {
+  margin-bottom: 0;
+}
+
+.feedback-captured-icon {
+  font-size: 0.85rem;
+  flex-shrink: 0;
+  width: 1.2rem;
+  text-align: center;
+}
+
+.feedback-captured-text {
   font-family: var(--font-system);
   font-size: 0.85rem;
   color: var(--text-light);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Feedback: surah search ── */
+.feedback-search-wrap {
+  position: relative;
+}
+
+.feedback-search-input {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid rgba(194, 160, 91, 0.3);
+  border-radius: 8px;
+  background: var(--bg-warm);
+  font-family: var(--font-system);
+  font-size: 0.95rem;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.feedback-search-input:focus {
+  border-color: var(--accent-gold);
+  box-shadow: 0 0 0 2px var(--accent-gold-glow);
+}
+
+.feedback-search-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid rgba(194, 160, 91, 0.25);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  z-index: 10;
+  -webkit-overflow-scrolling: touch;
+}
+
+.feedback-search-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.feedback-search-row:hover,
+.feedback-search-row:active {
+  background: var(--accent-warm);
+}
+
+.feedback-search-num {
+  font-family: var(--font-system);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  min-width: 1.8rem;
+  text-align: right;
+}
+
+.feedback-search-name {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.feedback-search-name-en {
+  font-family: var(--font-system);
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.feedback-search-name-ar {
+  font-family: var(--font-arabic);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  direction: rtl;
+}
+
+.feedback-search-ayahs {
+  font-family: var(--font-system);
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+/* ── Feedback: ayah selection ── */
+.feedback-ayah-section {
+  margin-top: 0.5rem;
+}
+
+.feedback-ayah-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.feedback-selected-surah {
+  font-family: var(--font-system);
+  font-size: 0.9rem;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.feedback-change-surah {
+  font-family: var(--font-system);
+  font-size: 0.8rem;
+  color: var(--accent-gold);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0.2rem;
+}
+
+.feedback-ayah-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.feedback-ayah-label {
+  font-family: var(--font-system);
+  font-size: 0.85rem;
+  color: var(--text-light);
+}
+
+.feedback-ayah-input {
+  width: 5rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid rgba(194, 160, 91, 0.3);
+  border-radius: 8px;
+  background: var(--bg-warm);
+  font-family: var(--font-system);
+  font-size: 0.95rem;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.feedback-ayah-input:focus {
+  border-color: var(--accent-gold);
+  box-shadow: 0 0 0 2px var(--accent-gold-glow);
+}
+
+/* ── Feedback: verse preview ── */
+.feedback-verse-preview {
+  font-family: var(--font-quran);
+  font-size: 1.2rem;
+  color: var(--text);
+  direction: rtl;
+  text-align: right;
+  line-height: 2;
+  padding: 0.75rem;
+  background: var(--accent-warm);
+  border-radius: 8px;
+  border: 1px solid rgba(194, 160, 91, 0.15);
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+/* ── Feedback: actions ── */
+.feedback-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.feedback-submit-btn {
+  width: 100%;
+  padding: 0.75rem;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent-gold);
+  color: #fff;
+  font-family: var(--font-system);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.1s ease;
+}
+
+.feedback-submit-btn:active {
+  transform: scale(0.98);
+}
+
+.feedback-submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.feedback-skip-btn {
+  width: 100%;
+  padding: 0.5rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-system);
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.feedback-skip-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ── Feedback: status ── */
+.feedback-status {
+  font-family: var(--font-system);
+  font-size: 0.85rem;
   text-align: center;
   margin-top: 0.75rem;
+  padding: 0.5rem;
+  border-radius: 6px;
+}
+
+.feedback-status--success {
+  color: #2e7d32;
+  background: rgba(46, 125, 50, 0.08);
+}
+
+.feedback-status--error {
+  color: #c62828;
+  background: rgba(198, 40, 40, 0.08);
 }
 
 /* ── Responsive ── */
@@ -1785,6 +2066,322 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   Algorithm View — live visualization of verse identification pipeline
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Algorithm view button icon states */
+.algo-icon--on {
+  display: none;
+}
+
+.algorithm-mode .algo-icon--off {
+  display: none;
+}
+
+.algorithm-mode .algo-icon--on {
+  display: block;
+}
+
+.algorithm-mode .mc-btn[title="Algorithm View"] {
+  background: rgba(194, 160, 91, 0.15);
+  border-color: rgba(194, 160, 91, 0.6);
+  color: var(--accent-gold);
+  box-shadow: 0 4px 16px rgba(194, 160, 91, 0.25);
+}
+
+/* Hide mushaf page/nav when algorithm view is active */
+.av-hidden {
+  display: none !important;
+}
+
+/* Algorithm view container */
+#algorithm-view {
+  background: #141312;
+  border: 1px solid rgba(194, 160, 91, 0.2);
+  border-radius: 12px;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-height: calc(100dvh - 12rem);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  animation: av-fade-in 0.3s ease-out;
+}
+
+@keyframes av-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Section containers */
+.av-section {
+  padding: 0;
+}
+
+.av-section-label {
+  font-family: var(--font-system);
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: rgba(194, 160, 91, 0.6);
+  margin-bottom: 0.5rem;
+}
+
+/* ── Raw Transcript ── */
+.av-transcript-text {
+  font-family: var(--font-arabic);
+  font-size: 1.25rem;
+  color: #e8e4dc;
+  line-height: 1.8;
+  min-height: 2rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: color 0.3s ease;
+}
+
+.av-transcript-text:empty::before {
+  content: "Waiting for audio...";
+  color: rgba(255, 255, 255, 0.2);
+  font-family: var(--font-system);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+/* ── Narrowing Cascade ── */
+.av-narrowing-cascade {
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(194, 160, 91, 0.3) transparent;
+}
+
+.av-narrow-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.5);
+  animation: av-row-slide-in 0.25s ease-out both;
+  transition: background 0.2s ease;
+}
+
+.av-narrow-row--latest {
+  background: rgba(194, 160, 91, 0.08);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+@keyframes av-row-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.av-narrow-word-num {
+  color: rgba(255, 255, 255, 0.35);
+  min-width: 4.5rem;
+  flex-shrink: 0;
+}
+
+.av-narrow-word-text {
+  font-family: var(--font-arabic);
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.7);
+  min-width: 5rem;
+  text-align: right;
+}
+
+.av-narrow-arrow {
+  color: rgba(194, 160, 91, 0.4);
+  flex-shrink: 0;
+}
+
+.av-narrow-count {
+  color: rgba(255, 255, 255, 0.5);
+  font-variant-numeric: tabular-nums;
+}
+
+.av-narrow-count--unique {
+  color: #7a9a5a;
+  font-weight: 600;
+}
+
+/* ── Top Candidates ── */
+.av-candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.av-candidate-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(80px, 120px) 2.5rem auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 4px;
+  transition: background 0.2s ease;
+}
+
+.av-candidate-row--top {
+  background: rgba(194, 160, 91, 0.08);
+}
+
+.av-candidate-ref {
+  font-family: var(--font-system);
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.av-candidate-row--top .av-candidate-ref {
+  color: var(--accent-gold);
+  font-weight: 600;
+}
+
+.av-candidate-bar {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.av-candidate-bar-fill {
+  height: 100%;
+  background: rgba(194, 160, 91, 0.35);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.av-candidate-row--top .av-candidate-bar-fill {
+  background: var(--accent-gold);
+}
+
+.av-candidate-score {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.4);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.av-candidate-row--top .av-candidate-score {
+  color: var(--accent-gold);
+}
+
+.av-candidate-indicator {
+  font-family: var(--font-system);
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.25);
+  white-space: nowrap;
+}
+
+.av-candidate-indicator--likely {
+  color: var(--accent-gold);
+}
+
+/* ── Disambiguation Info ── */
+.av-disambig-info {
+  font-family: var(--font-system);
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.5);
+  line-height: 1.5;
+  min-height: 1.2rem;
+}
+
+.av-disambig-info--warning {
+  color: #d4a04a;
+}
+
+.av-disambig-info--info {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.av-disambig-warning,
+.av-disambig-icon {
+  margin-right: 0.25rem;
+}
+
+/* ── Identified State ── */
+.av-identified {
+  background: rgba(122, 154, 90, 0.08);
+  border: 1px solid rgba(122, 154, 90, 0.3);
+  border-radius: 8px;
+  padding: 1rem;
+  animation: av-identified-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes av-identified-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.av-identified-badge {
+  display: inline-block;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #7a9a5a;
+  background: rgba(122, 154, 90, 0.12);
+  padding: 0.15rem 0.6rem;
+  border-radius: 4px;
+  margin-bottom: 0.6rem;
+}
+
+.av-identified-ref {
+  font-family: var(--font-system);
+  font-size: 1rem;
+  font-weight: 600;
+  color: #e8e4dc;
+  margin-bottom: 0.4rem;
+}
+
+.av-identified-text {
+  font-family: var(--font-arabic);
+  font-size: 1.1rem;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.9;
+  margin-bottom: 0.6rem;
+}
+
+.av-identified-stats {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 0.02em;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    Mobile Responsiveness — Landscape, safe areas, touch, report dialog
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -1875,6 +2472,44 @@ body {
   /* Hide github link when candidate bar is showing */
   #candidate-list.visible ~ #github-link {
     display: none;
+  }
+}
+
+/* ── Algorithm view mobile fixes ── */
+@media (max-width: 640px) {
+  #algorithm-view {
+    padding: 0.75rem;
+    gap: 0.75rem;
+    max-height: calc(100dvh - 10rem);
+    border-radius: 8px;
+  }
+
+  .av-transcript-text {
+    font-size: 1.05rem;
+  }
+
+  .av-narrow-row {
+    font-size: 0.7rem;
+    gap: 0.35rem;
+    padding: 0.2rem 0.35rem;
+  }
+
+  .av-narrow-word-num {
+    min-width: 3.5rem;
+  }
+
+  .av-candidate-row {
+    grid-template-columns: minmax(0, 1fr) 60px 2rem auto;
+    gap: 0.3rem;
+    font-size: 0.72rem;
+  }
+
+  .av-candidate-indicator {
+    display: none;
+  }
+
+  .av-identified {
+    padding: 0.75rem;
   }
 }
 

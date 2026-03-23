@@ -162,6 +162,53 @@ export class QuranDB {
   }
 
   /**
+   * Get the full disambiguation entry for a verse (word count, disambiguation
+   * lengths per starting position, and confuser verse refs).
+   */
+  getDisambiguationEntry(surah: number, ayah: number): DisambiguationEntry | null {
+    return this._disambig.get(`${surah}:${ayah}`) ?? null;
+  }
+
+  /**
+   * Count how many verses start with the given word prefix sequence.
+   * Walks the prefix trie and returns the candidate count at each depth.
+   * Returns an array of { word, count } for each word consumed.
+   */
+  prefixNarrowingCascade(
+    words: string[],
+  ): { word: string; count: number }[] {
+    if (!words.length) return [];
+
+    const result: { word: string; count: number }[] = [];
+    let node = this._prefixRoot;
+
+    for (const word of words) {
+      // Exact match first
+      let child = node.children.get(word);
+
+      // Fuzzy fallback (same logic as narrowByPrefix)
+      if (!child && node.children.size > 0 && word.length >= 3) {
+        let bestSim = 0.74;
+        let bestChild: PrefixNode | undefined;
+        for (const [childWord, childNode] of node.children) {
+          const sim = _charSimilarity(word, childWord);
+          if (sim > bestSim) {
+            bestSim = sim;
+            bestChild = childNode;
+          }
+        }
+        child = bestChild;
+      }
+
+      if (!child) break;
+      node = child;
+      result.push({ word, count: node.indices.length });
+    }
+
+    return result;
+  }
+
+  /**
    * Build a word-prefix trie over all verse texts (normalized).
    * Each node tracks the set of verse indices whose text matches the path
    * from root to that node as a word prefix.
