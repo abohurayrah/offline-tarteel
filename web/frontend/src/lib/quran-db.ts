@@ -44,11 +44,59 @@ export function partialRatio(short: string, long: string): number {
 
 const BSM_NORM = normalizeArabic("بسم الله الرحمن الرحيم");
 
+/**
+ * Fast character-level similarity (Jaccard on character bigrams).
+ * Used for fuzzy word matching in the prefix trie walk.
+ */
+function _charSimilarity(a: string, b: string): number {
+  if (a === b) return 1.0;
+  if (a.length < 2 || b.length < 2) return a === b ? 1.0 : 0.0;
+  const bigramsA = new Set<string>();
+  for (let i = 0; i < a.length - 1; i++) bigramsA.add(a[i] + a[i + 1]);
+  let intersection = 0;
+  const bigramsB = new Set<string>();
+  for (let i = 0; i < b.length - 1; i++) {
+    const bg = b[i] + b[i + 1];
+    bigramsB.add(bg);
+    if (bigramsA.has(bg)) intersection++;
+  }
+  const union = bigramsA.size + bigramsB.size - intersection;
+  return union > 0 ? intersection / union : 0.0;
+}
+
+// ---------------------------------------------------------------------------
+// Disambiguation compact entry (from ambiguity-compact.json, paper research)
+// w  = total word count of the verse
+// d  = per-starting-position disambiguation length (-1 = never unique alone)
+// c  = list of confuser verse refs ("surah:ayah") from the first word position
+// ---------------------------------------------------------------------------
+export interface DisambiguationEntry {
+  w: number;
+  d: number[];
+  c: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Word-prefix index node
+// Implements a trie over normalized Arabic words so we can narrow the
+// candidate set to O(1) per word consumed, rather than scoring all 6 236
+// verses with Levenshtein on every cycle.
+// ---------------------------------------------------------------------------
+interface PrefixNode {
+  // verse indices (into QuranDB.verses) that have this word sequence as a prefix
+  indices: number[];
+  children: Map<string, PrefixNode>;
+}
+
 export class QuranDB {
   verses: QuranVerse[];
   private _byRef: Map<string, QuranVerse> = new Map();
   private _bySurah: Map<number, QuranVerse[]> = new Map();
   private _trigramIndex: Map<string, number[]> = new Map();
+
+  // --- new disambiguation / prefix-narrowing state ---
+  private _disambig: Map<string, DisambiguationEntry> = new Map();
+  private _prefixRoot: PrefixNode = { indices: [], children: new Map() };
 
   constructor(data: QuranVerse[]) {
     this.verses = data;
@@ -80,6 +128,232 @@ export class QuranDB {
       this._bySurah.set(v.surah, arr);
     }
     this._buildTrigramIndex();
+    this._buildPrefixIndex();
+  }
+
+  /**
+   * Load the disambiguation compact map (ambiguity-compact.json).
+   * Called after construction once the JSON has been fetched.
+   */
+  loadDisambiguationMap(map: Record<string, DisambiguationEntry>): void {
+    this._disambig.clear();
+    for (const [key, entry] of Object.entries(map)) {
+      this._disambig.set(key, entry);
+    }
+  }
+
+  /**
+   * How many words from the start of this verse are needed to uniquely
+   * identify it from the full corpus?  Returns -1 if the verse is never
+   * uniquely identifiable in isolation (needs boundary context).
+   */
+  getDisambiguationLength(surah: number, ayah: number): number {
+    const entry = this._disambig.get(`${surah}:${ayah}`);
+    if (!entry || !entry.d.length) return -1;
+    return entry.d[0];
+  }
+
+  /**
+   * Is this verse one of the 339 that are never uniquely identifiable
+   * from their opening words alone (bismillah, refrains, muqattaat)?
+   */
+  isAmbiguousInIsolation(surah: number, ayah: number): boolean {
+    return this.getDisambiguationLength(surah, ayah) === -1;
+  }
+
+  /**
+   * Build a word-prefix trie over all verse texts (normalized).
+   * Each node tracks the set of verse indices whose text matches the path
+   * from root to that node as a word prefix.
+   *
+   * For bismillah-stripped ayah-1 verses we insert BOTH the full text and
+   * the stripped text so the trie can match whether or not the user recites
+   * the opening bismillah.
+   */
+  private _buildPrefixIndex(): void {
+    this._prefixRoot = { indices: [], children: new Map() };
+
+    for (let idx = 0; idx < this.verses.length; idx++) {
+      const v = this.verses[idx];
+      if (!v.text_words?.length) continue;
+
+      // Insert full text prefix
+      this._insertPrefixPath(v.text_words, idx);
+
+      // Insert no-bismillah prefix as an alternative entry for the same verse
+      if (v.text_norm_no_bsm) {
+        const noBsmWords = v.text_norm_no_bsm.split(" ").filter(Boolean);
+        if (noBsmWords.length > 0) {
+          this._insertPrefixPath(noBsmWords, idx);
+        }
+      }
+    }
+  }
+
+  private _insertPrefixPath(words: string[], verseIdx: number): void {
+    let node = this._prefixRoot;
+    // Root tracks all verses (universe set — not populated for performance)
+    for (const word of words) {
+      let child = node.children.get(word);
+      if (!child) {
+        child = { indices: [], children: new Map() };
+        node.children.set(word, child);
+      }
+      // Only track indices at nodes deeper than 1 word to avoid huge sets
+      // at the root level while still being useful for narrowing
+      child.indices.push(verseIdx);
+      node = child;
+    }
+  }
+
+  /**
+   * Given a sequence of recognized words (from the CTC transcript),
+   * walk the prefix trie and return the narrowed candidate set.
+   *
+   * Returns null if not enough words to narrow, otherwise returns the
+   * set of verse indices whose text starts with the given word sequence.
+   *
+   * Fuzzy matching: if an exact word is not found as a child, try the
+   * best Levenshtein-similar child word (similarity >= 0.75).  This
+   * handles the CTC producing slight variations like alif variants.
+   */
+  narrowByPrefix(
+    words: string[],
+    maxCandidates = 50,
+  ): number[] | null {
+    if (!words.length) return null;
+
+    let node = this._prefixRoot;
+    let depth = 0;
+
+    for (const word of words) {
+      // Exact match first
+      let child = node.children.get(word);
+
+      // Fuzzy fallback: try Levenshtein-similar child words
+      if (!child && node.children.size > 0 && word.length >= 3) {
+        let bestSim = 0.74;
+        let bestChild: PrefixNode | undefined;
+        for (const [childWord, childNode] of node.children) {
+          const sim = _charSimilarity(word, childWord);
+          if (sim > bestSim) {
+            bestSim = sim;
+            bestChild = childNode;
+          }
+        }
+        child = bestChild;
+      }
+
+      if (!child) break; // No match at this depth — stop narrowing
+      node = child;
+      depth++;
+    }
+
+    if (depth === 0) return null;
+
+    const candidates = node.indices;
+    if (candidates.length === 0 || candidates.length > maxCandidates) return null;
+    return candidates;
+  }
+
+  /**
+   * Score a pre-narrowed candidate set against a transcript.
+   *
+   * This is the second phase of prefix-narrowing: after the trie has reduced
+   * the search space to a small set of verses, pick the best match using the
+   * same scoring functions as matchVerse but only over those candidates.
+   *
+   * Returns null if no candidate scores above the threshold.
+   */
+  matchVerseFromCandidates(
+    text: string,
+    candidateIndices: number[],
+    threshold = 0.35,
+    hint: [number, number] | null = null,
+  ): Record<string, any> | null {
+    if (!text.trim() || !candidateIndices.length) return null;
+
+    const normText = normalizeArabic(text);
+    const noSpaceText = normText.replace(/ /g, "");
+    if (noSpaceText.length < 2) return null;
+
+    const bonuses = hint ? this._continuationBonuses(hint) : new Map<string, number>();
+    const textWords = normText.split(" ");
+
+    const scored: [QuranVerse, number, number, number][] = [];
+    for (const idx of candidateIndices) {
+      if (idx < 0 || idx >= this.verses.length) continue;
+      const v = this.verses[idx];
+
+      let raw = QuranDB._smartScore(noSpaceText, v.text_norm_ns!);
+      if (v.text_norm_no_bsm_ns) {
+        raw = Math.max(raw, QuranDB._smartScore(noSpaceText, v.text_norm_no_bsm_ns));
+      }
+      const spacedRatio = ratio(normText, v.text_norm!);
+      raw = Math.max(raw, spacedRatio);
+      if (v.text_norm_no_bsm) {
+        raw = Math.max(raw, ratio(normText, v.text_norm_no_bsm));
+      }
+
+      // For short verses / short transcripts: also do a direct word-prefix match.
+      // If the first N recognized words all match the verse's first N words, boost.
+      if (v.text_words && textWords.length <= v.text_words.length) {
+        let prefixMatch = 0;
+        for (let i = 0; i < textWords.length; i++) {
+          if (i >= v.text_words.length) break;
+          const sim = _charSimilarity(textWords[i], v.text_words[i]);
+          if (sim >= 0.75) prefixMatch++;
+          else break;
+        }
+        if (prefixMatch >= textWords.length * 0.8 && prefixMatch >= 1) {
+          // Prefix matched well — boost based on coverage
+          const boostFactor = 0.1 * (prefixMatch / Math.max(textWords.length, 1));
+          raw = Math.min(raw + boostFactor, 1.0);
+        }
+      }
+
+      // Sellers' word-level matching: for mid-ayah recognition
+      if (v.text_words && v.text_words.length >= 5 && textWords.length < v.text_words.length * 0.8) {
+        const sellersScore = QuranDB._sellersScore(normText, v.text_words);
+        raw = Math.max(raw, sellersScore * 0.95);
+        if (v.text_norm_no_bsm) {
+          const noBsmWords = v.text_norm_no_bsm.split(" ");
+          if (noBsmWords.length >= 3) {
+            raw = Math.max(raw, QuranDB._sellersScore(normText, noBsmWords) * 0.95);
+          }
+        }
+      }
+
+      const bonus = bonuses.get(`${v.surah}:${v.ayah}`) ?? 0.0;
+      scored.push([v, raw, bonus, Math.min(raw + bonus, 1.0)]);
+    }
+
+    if (!scored.length) return null;
+    scored.sort((a, b) => b[3] - a[3]);
+
+    const [bestV, bestRaw, bestBonus, bestScore] = scored[0];
+    if (bestScore < threshold) return null;
+
+    const runnersUp = scored.slice(0, 5).map(([v, raw, bon, total]) => ({
+      surah: v.surah,
+      ayah: v.ayah,
+      raw_score: Math.round(raw * 1000) / 1000,
+      bonus: Math.round(bon * 1000) / 1000,
+      score: Math.round(total * 1000) / 1000,
+      text_norm: (v.text_norm ?? "").slice(0, 60),
+      surah_name: v.surah_name,
+      surah_name_en: v.surah_name_en,
+      text_uthmani: v.text_uthmani.slice(0, 80),
+    }));
+
+    return {
+      ...bestV,
+      score: bestScore,
+      raw_score: bestRaw,
+      bonus: bestBonus,
+      runners_up: runnersUp,
+      _via_prefix_narrowing: true,
+    };
   }
 
   private _buildTrigramIndex(): void {

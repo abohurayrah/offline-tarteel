@@ -162,6 +162,23 @@ async function init() {
     if (!quranRes.ok) throw new Error(`quran.json fetch failed: ${quranRes.status}`);
     const quranData = await quranRes.json();
     db = new QuranDB(quranData);
+    post({ type: "loading", percent: 65 });
+
+    // Load disambiguation map (ambiguity-compact.json from paper research).
+    // This enables the prefix-narrowing path in RecitationTracker which
+    // mirrors the paper's progressive candidate narrowing algorithm.
+    // The file is ~619 KB and loads asynchronously — failure is non-fatal.
+    try {
+      post({ type: "loading_status", message: "Loading disambiguation index..." });
+      const disambigRes = await fetch("/ambiguity-compact.json");
+      if (disambigRes.ok) {
+        const disambigData = await disambigRes.json();
+        db.loadDisambiguationMap(disambigData);
+      }
+    } catch {
+      // Non-fatal: tracker falls back to Levenshtein-only matching
+      console.warn("ambiguity-compact.json not available; prefix-narrowing disabled");
+    }
     post({ type: "loading", percent: 70 });
 
     // Build Quran trie for constrained decoding

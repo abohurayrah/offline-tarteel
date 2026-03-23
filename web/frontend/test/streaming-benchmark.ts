@@ -54,6 +54,17 @@ async function init() {
   );
   decoder = new CTCDecoder(JSON.parse(readFileSync(resolve(ROOT, "public/vocab.json"), "utf-8")));
   db = new QuranDB(JSON.parse(readFileSync(resolve(ROOT, "public/quran.json"), "utf-8")));
+
+  // Load disambiguation map for prefix-narrowing (mirrors the worker init path)
+  const disambigPath = resolve(ROOT, "public/ambiguity-compact.json");
+  if (existsSync(disambigPath)) {
+    const disambigData = JSON.parse(readFileSync(disambigPath, "utf-8"));
+    db.loadDisambiguationMap(disambigData);
+    console.log("Disambiguation map loaded.");
+  } else {
+    console.warn("ambiguity-compact.json not found; prefix-narrowing disabled.");
+  }
+
   console.log("Ready.\n");
 }
 

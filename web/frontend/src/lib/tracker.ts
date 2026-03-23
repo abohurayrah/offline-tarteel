@@ -4,6 +4,7 @@ import type { QuranVerse, WorkerOutbound, SurroundingVerse, CandidateVerse, Vers
 import {
   SAMPLE_RATE,
   TRIGGER_SAMPLES,
+  FIRST_TRIGGER_SAMPLES,
   MAX_WINDOW_SAMPLES,
   SILENCE_RMS_THRESHOLD,
   VERSE_MATCH_THRESHOLD,
@@ -16,6 +17,8 @@ import {
   STALE_CYCLE_LIMIT,
   LOOKAHEAD,
   MIN_DISCOVERY_WORDS,
+  PREFIX_NARROW_THRESHOLD,
+  PREFIX_NARROW_MAX_CANDIDATES,
 } from "./types";
 
 export interface TranscribeResult {
@@ -463,11 +466,14 @@ export class RecitationTracker {
   private async _handleDiscovery(): Promise<WorkerOutbound[]> {
     const messages: WorkerOutbound[] = [];
 
-    // Adaptive trigger: first attempt after 3.0s, same as standard.
-    // FastConformer needs ~3s of audio for a useful transcript.
-    const triggerThreshold = !this.hasEverMatched && this.cyclesSinceEmit === Infinity
-      ? Math.floor(SAMPLE_RATE * 3.0)
-      : TRIGGER_SAMPLES;
+    // Adaptive trigger:
+    //   - Very first attempt of the session: 2.0s (FIRST_TRIGGER_SAMPLES).
+    //     Short clips (< 3s) would get zero inference cycles at the old 3.0s
+    //     threshold.  FastConformer can produce useful output from 2s of audio.
+    //   - Subsequent discovery cycles: 3.0s (TRIGGER_SAMPLES) to avoid being
+    //     chatty and to give the model enough context for longer verses.
+    const isVeryFirstAttempt = !this.hasEverMatched && this.cyclesSinceEmit === Infinity;
+    const triggerThreshold = isVeryFirstAttempt ? FIRST_TRIGGER_SAMPLES : TRIGGER_SAMPLES;
     if (this.newAudioCount < triggerThreshold) return messages;
     this.newAudioCount = 0;
     this.cyclesSinceEmit++;
@@ -531,25 +537,129 @@ export class RecitationTracker {
       ? this.accumulatedText
       : text;
 
-    // Match against QuranDB — use narrow matching if we have recent context
-    // Always request top-K candidates for live narrowing UI
-    let match: VerseMatch | null;
-    if (this.lastEmittedRef && this.cyclesSinceEmit <= 3) {
-      match = this.db.matchVerseNarrow(
-        matchText,
-        this.lastEmittedRef,
-        5,
-        RAW_TRANSCRIPT_THRESHOLD,
-      );
-    } else {
-      match = this.db.matchVerse(
-        matchText,
-        RAW_TRANSCRIPT_THRESHOLD,
-        4,
-        this.lastEmittedRef,
-        10,
-        this.sessionSurah,
-      );
+    // -----------------------------------------------------------------------
+    // Phase 1 — Prefix-narrowing (paper algorithm, low latency path)
+    //
+    // Use the first N recognized words to walk the QuranDB word-prefix trie.
+    // If this narrows to a small candidate set (per-paper: mean 3.11 words
+    // suffices for 94.6% of verses), score only those candidates with a
+    // relaxed threshold.  This replaces the full 6236-verse Levenshtein pass
+    // for the discovery step, dramatically lowering the score needed to emit.
+    //
+    // We attempt prefix-narrowing FIRST because it is faster and more
+    // discriminative for short/clean transcripts.  If it fails (transcript
+    // too noisy / candidate set too large), we fall back to the original
+    // matchVerse path below.
+    // -----------------------------------------------------------------------
+    let match: VerseMatch | null = null;
+    let viaPrefix = false;
+    // Set to true when Phase 1 explicitly found a candidate but determined
+    // we need more audio before emitting (disambiguation hold).
+    // When true, Phase 2 is SKIPPED to prevent the full-corpus search from
+    // overriding the Phase 1 hold with an incorrect premature match.
+    let prefixDeferred = false;
+
+    {
+      const normWords = matchText.split(" ").filter(w => w.length > 0);
+      // Use first 8 words for narrowing (paper: 89.4% unique within 6 words;
+      // use 8 for margin when the first 6 are still ambiguous)
+      const prefixWords = normWords.slice(0, 8);
+
+      if (prefixWords.length >= 1) {
+        // Try progressively longer prefixes from longest to shortest.
+        // Longest prefix = most discriminative; stop as soon as we get a
+        // candidate set small enough to score reliably (up to PREFIX_NARROW_MAX_CANDIDATES).
+        for (let depth = prefixWords.length; depth >= 1; depth--) {
+          const narrowed = this.db.narrowByPrefix(
+            prefixWords.slice(0, depth),
+            PREFIX_NARROW_MAX_CANDIDATES,
+          );
+          if (narrowed && narrowed.length > 0 && narrowed.length <= PREFIX_NARROW_MAX_CANDIDATES) {
+            const prefixMatch = this.db.matchVerseFromCandidates(
+              matchText,
+              narrowed,
+              PREFIX_NARROW_THRESHOLD,
+              this.lastEmittedRef,
+            );
+            if (prefixMatch) {
+              // Disambiguation-aware hold: the paper tells us exactly how many
+              // words are needed from the start of this verse to uniquely
+              // identify it.  If we have fewer words than that, the current
+              // winner may change once more audio arrives — defer.
+              //
+              // Exception: if the narrowed set has exactly 1 candidate, the
+              // trie itself has already disambiguated (no hold needed).
+              const requiresWords = this.db.getDisambiguationLength(prefixMatch.surah, prefixMatch.ayah);
+              const haveWords = normWords.length;
+              const trieUnique = narrowed.length === 1;
+
+              if (!trieUnique && requiresWords > 0 && haveWords < requiresWords) {
+                // Don't emit yet — accumulate more audio and re-try.
+                // Mark as deferred so Phase 2 doesn't override this hold.
+                prefixDeferred = true;
+                break;
+              }
+
+              match = prefixMatch as VerseMatch;
+              viaPrefix = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // Phase 2 — Full corpus match (original path, fallback when prefix fails)
+    // SKIP when Phase 1 explicitly deferred — the deferral means we found a
+    // narrowed candidate set but need more words before we can commit.
+    // Running Phase 2 here would pick a premature match from the full corpus.
+    if (!match && !prefixDeferred) {
+      if (this.lastEmittedRef && this.cyclesSinceEmit <= 3) {
+        match = this.db.matchVerseNarrow(
+          matchText,
+          this.lastEmittedRef,
+          5,
+          RAW_TRANSCRIPT_THRESHOLD,
+        ) as VerseMatch | null;
+      } else {
+        match = this.db.matchVerse(
+          matchText,
+          RAW_TRANSCRIPT_THRESHOLD,
+          4,
+          this.lastEmittedRef,
+          10,
+          this.sessionSurah,
+        ) as VerseMatch | null;
+      }
+    }
+
+    // Phase 2 disambiguation-aware hold: if Phase 2 returned a match via
+    // full-corpus search, apply the same logic as Phase 1 — if the matched
+    // verse needs MORE words than the transcript has to be uniquely identified,
+    // require a higher confidence score (>= 0.75) to commit.
+    //
+    // This prevents the low FIRST_MATCH_THRESHOLD (0.55) from causing premature
+    // commits on the first 2s trigger for long verses with ambiguous openings.
+    //
+    // Exception: continue normally when match is a short verse (text_words <= 4)
+    // or when we already have enough words per the disambiguation data.
+    if (match && !viaPrefix) {
+      const requiresWords = this.db.getDisambiguationLength(match.surah, match.ayah);
+      const haveWords = matchText.split(" ").filter(w => w.length > 0).length;
+      const matchedVerseWordCount2 = this.db.getVerse(match.surah, match.ayah)?.text_words?.length ?? 0;
+      const isShortVerse2 = matchedVerseWordCount2 <= 4;
+
+      // If we don't have enough words for reliable disambiguation AND the verse
+      // is not trivially short, raise the required confidence.
+      if (!isShortVerse2 && requiresWords > 0 && haveWords < requiresWords) {
+        // Require 0.75 confidence for premature Phase 2 matches
+        // (same as original FIRST_MATCH_THRESHOLD, but only for long verses)
+        if (match.score < 0.75) {
+          // Not confident enough — treat as deferred, fall through to raw_transcript
+          match = null;
+          prefixDeferred = true;
+        }
+      }
     }
 
     // Emit candidate list for live narrowing UI
@@ -580,13 +690,25 @@ export class RecitationTracker {
       ? VERSE_MATCH_THRESHOLD
       : FIRST_MATCH_THRESHOLD;
 
+    // When the match came via prefix-narrowing (paper algorithm), the
+    // candidate set was already pre-filtered to <= PREFIX_NARROW_MAX_CANDIDATES
+    // verses.  The prefix trie provides the same false-positive protection that
+    // the high FIRST_MATCH_THRESHOLD was meant to give, so we can use the
+    // lower PREFIX_NARROW_THRESHOLD instead.
+    if (viaPrefix) {
+      effectiveThreshold = Math.min(effectiveThreshold, PREFIX_NARROW_THRESHOLD);
+    }
+
     if (match && this.hasEverMatched && this.cyclesSinceEmit <= 2 && this.lastEmittedRef) {
       const isContinuation =
         match.surah === this.lastEmittedRef[0] &&
         match.ayah >= this.lastEmittedRef[1] + 1 &&
         match.ayah <= this.lastEmittedRef[1] + 3;
       if (!isContinuation) {
-        effectiveThreshold = Math.max(effectiveThreshold, 0.65);
+        // Keep the anti-cascade bump, but don't let it exceed 0.65 when we
+        // have prefix-narrowing confidence (pre-filtered candidates).
+        const cascadeBump = viaPrefix ? 0.55 : 0.65;
+        effectiveThreshold = Math.max(effectiveThreshold, cascadeBump);
       }
     }
 
@@ -613,7 +735,18 @@ export class RecitationTracker {
     // Minimum word count for first discovery match (prevents false positives
     // on very short / ambiguous audio). Once tracking is established, shorter
     // transcripts are fine for continuation.
+    //
+    // Exception paths:
+    //   - Muqatta'at (disconnected letters): always allow (1 word, <= 5 chars)
+    //   - Prefix-narrowing hit with short verse: skip MIN_DISCOVERY_WORDS gate
+    //     when the matched verse itself is short (text_words.length <= 3) since
+    //     there is no more text to wait for.
+    //   - Already-established session with context: gate only applies for the
+    //     very first match.
     const matchWords = matchText.split(" ").filter((w: string) => w.length > 0);
+    const matchedVerse = match ? this.db.getVerse(match.surah, match.ayah) : null;
+    const matchedVerseWordCount = matchedVerse?.text_words?.length ?? 999;
+
     if (!this.hasEverMatched && matchWords.length < MIN_DISCOVERY_WORDS && match && match.score >= effectiveThreshold) {
       // Exception: muqatta'at (isolated letter) verses like يس, طه, الم,
       // كهيعص, حم, المص etc. These are 1 word of <= 5 characters.
@@ -621,7 +754,14 @@ export class RecitationTracker {
       const isMuqattaat = match.score >= 0.95 &&
         matchWords.length === 1 &&
         matchWords[0].length <= 5;
-      if (!isMuqattaat) {
+      // Exception: the ENTIRE verse is short (e.g. 114:2 = 2 words).
+      // Waiting for more words is pointless — there are none.
+      const isShortVerse = matchedVerseWordCount <= MIN_DISCOVERY_WORDS;
+      // Exception: prefix-narrowing resolved to a uniquely identifying prefix
+      // (the trie confirmed this word sequence belongs to only this verse).
+      const isPrefixUnique = viaPrefix && match.score >= PREFIX_NARROW_THRESHOLD;
+
+      if (!isMuqattaat && !isShortVerse && !isPrefixUnique) {
         // Not enough words yet — emit raw transcript and wait for more audio
         messages.push({
           type: "raw_transcript",
@@ -634,7 +774,10 @@ export class RecitationTracker {
 
     // Fragment coverage gate: only block extremely short fragments (1-2 words)
     // of very long verses (15+ words) with low scores.
-    if (match && match.text_words && match.text_words.length > 15 &&
+    // Exception: skip this gate when prefix-narrowing has pre-vetted the
+    // candidates — the trie already ensures the short transcript matches this
+    // verse's prefix, so the short-fragment check is not needed.
+    if (!viaPrefix && match && match.text_words && match.text_words.length > 15 &&
         matchWords.length <= 2 && match.score < 0.95) {
       messages.push({ type: "raw_transcript", text, confidence: Math.round(match.score * 100) / 100 });
       return messages;
@@ -645,8 +788,56 @@ export class RecitationTracker {
 
       // Ambiguity guard: only suppress when scores are nearly identical
       // and the transcript hasn't clearly differentiated the verses.
+      //
+      // Key improvement: when we have sequential boundary context (the user
+      // has been reciting and we know the previous verse), use that to resolve
+      // the 339 never-unique verses (bismillah openers, refrains, muqattaat).
+      // The paper shows 328/339 resolve with boundary context.
       const runnersUp: VerseMatchCandidate[] = match.runners_up ?? [];
-      if (runnersUp.length >= 2) {
+      const isAmbiguousVerse = this.db.isAmbiguousInIsolation(match.surah, match.ayah);
+      const hasSequentialContext = this.lastEmittedRef !== null && this.hasEverMatched;
+
+      // Boundary context resolution: if the matched verse is never-unique in
+      // isolation AND we have a previous verse, check if the match is the
+      // sequential successor.  If yes, emit with high confidence.
+      if (isAmbiguousVerse && hasSequentialContext && this.lastEmittedRef) {
+        const [prevS, prevA] = this.lastEmittedRef;
+        const isSequentialNext =
+          (match.surah === prevS && match.ayah === prevA + 1) ||
+          (match.surah === prevS + 1 && match.ayah === 1 && !this.db.getVerse(prevS, prevA + 1));
+        const isSameSessionSurah = this.sessionSurah !== null && match.surah === this.sessionSurah;
+
+        if (isSequentialNext || isSameSessionSurah) {
+          // Context resolves the ambiguity — skip the ambiguity guard and emit
+        } else if (runnersUp.length >= 2) {
+          // Still run the ambiguity guard since context doesn't resolve it
+          const matchVerse = this.db.getVerse(match.surah, match.ayah);
+          let altRunner: VerseMatchCandidate | null = null;
+          for (const ru of runnersUp) {
+            if (ru.surah !== match.surah || ru.ayah !== match.ayah) {
+              altRunner = ru;
+              break;
+            }
+          }
+          if (altRunner && altRunner.score >= runnersUp[0].score * 0.97) {
+            // Defer — truly ambiguous without context
+            const deferKey = `${match.surah}:${match.ayah}`;
+            if (this.lastDeferredRef === deferKey) {
+              this.consecutiveDeferrals++;
+            } else {
+              this.consecutiveDeferrals = 1;
+              this.lastDeferredRef = deferKey;
+            }
+            if (this.consecutiveDeferrals <= 2) {
+              messages.push({ type: "raw_transcript", text, confidence: Math.round(match.score * 100) / 100 });
+              return messages;
+            }
+            this.consecutiveDeferrals = 0;
+            this.lastDeferredRef = null;
+          }
+        }
+      } else if (runnersUp.length >= 2) {
+        // Original ambiguity guard path (non-ambiguous verses or no context)
         const matchVerse = this.db.getVerse(match.surah, match.ayah);
         let altRunner: VerseMatchCandidate | null = null;
         for (const ru of runnersUp) {
@@ -662,15 +853,11 @@ export class RecitationTracker {
             const w1 = matchVerse.text_norm!.split(" ");
             const w2 = altVerse.text_norm!.split(" ");
             let sharedPrefix = 0;
-            for (
-              let i = 0;
-              i < Math.min(w1.length, w2.length);
-              i++
-            ) {
+            for (let i = 0; i < Math.min(w1.length, w2.length); i++) {
               if (w1[i] === w2[i]) sharedPrefix++;
               else break;
             }
-            // Adaptive guard: for short transcripts (≤6 words, typical
+            // Adaptive guard: for short transcripts (<=6 words, typical
             // bismillah + 0-2 words), use sharedPrefix threshold of 4;
             // for longer transcripts, keep the original threshold of 8.
             const textWords = text.split(" ").length;
@@ -696,8 +883,7 @@ export class RecitationTracker {
                   messages.push({
                     type: "raw_transcript",
                     text,
-                    confidence:
-                      Math.round(match.score * 100) / 100,
+                    confidence: Math.round(match.score * 100) / 100,
                   });
                   return messages;
                 }

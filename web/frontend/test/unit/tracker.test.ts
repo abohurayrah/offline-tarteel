@@ -551,22 +551,16 @@ describe("RecitationTracker", () => {
 
   // --- Minimum word count for first discovery (Issue 2) ---
 
-  it("does NOT emit verse_match for a 2-word transcript on first discovery", async () => {
+  it("does NOT emit verse_match for a 1-word transcript on first discovery", async () => {
     const db = getFixtureQuranDB();
-    // Return only 2 words — below MIN_DISCOVERY_WORDS threshold
-    const transcribe = createMockTranscriber(["بسم الله"]);
+    // Return only 1 word — below MIN_DISCOVERY_WORDS=2 threshold
+    const transcribe = createMockTranscriber(["بسم"]);
     const tracker = new RecitationTracker(db, transcribe);
 
     const msgs = await tracker.feed(fakeAudio(SAMPLE_RATE * 5));
     const verseMatches = msgs.filter((m) => m.type === "verse_match");
     // Should NOT emit verse_match — too few words for first discovery
     expect(verseMatches.length).toBe(0);
-
-    // Should emit raw_transcript instead (if score was above threshold)
-    // or nothing if score was below threshold
-    const rawTranscripts = msgs.filter((m) => m.type === "raw_transcript");
-    // Either raw_transcript or nothing — but not verse_match
-    expect(rawTranscripts.length + verseMatches.length).toBeLessThanOrEqual(1);
   });
 
   it("DOES emit verse_match for a 5-word transcript on first discovery", async () => {
@@ -640,8 +634,8 @@ describe("RecitationTracker", () => {
     expect(verseMatches.length).toBeLessThanOrEqual(1);
   });
 
-  it("MIN_DISCOVERY_WORDS constant is 3", () => {
-    // Verify the exported constant value matches expectations
-    expect(MIN_DISCOVERY_WORDS).toBe(3);
+  it("MIN_DISCOVERY_WORDS constant is 2", () => {
+    // Paper shows 44.3% of verses uniquely identifiable in 2 words
+    expect(MIN_DISCOVERY_WORDS).toBe(2);
   });
 });

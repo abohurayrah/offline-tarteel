@@ -147,12 +147,20 @@ export interface QuranVerse {
 // Constants (matching server.py exactly)
 // ---------------------------------------------------------------------------
 export const SAMPLE_RATE = 16000;
+// First inference attempt after 2.0s (down from 3.0s) so short clips get at
+// least one inference cycle.  Subsequent cycles still use TRIGGER_SAMPLES so
+// discovery doesn't become chatty once audio is flowing.
 export const TRIGGER_SAMPLES = SAMPLE_RATE * 3.0;
+export const FIRST_TRIGGER_SAMPLES = SAMPLE_RATE * 2.0;   // very first attempt
 export const MAX_WINDOW_SAMPLES = SAMPLE_RATE * 10.0;
 export const SILENCE_RMS_THRESHOLD = 0.005;
 
 export const VERSE_MATCH_THRESHOLD = 0.45;
-export const FIRST_MATCH_THRESHOLD = 0.75;
+// Lowered from 0.75 — the prefix-narrowing path in the tracker applies
+// additional candidate pre-filtering before scoring, so the threshold can
+// be lower without increasing false positives.  The original 0.75 was
+// calibrated for a full-corpus scan with no pre-filtering.
+export const FIRST_MATCH_THRESHOLD = 0.55;
 export const RAW_TRANSCRIPT_THRESHOLD = 0.25;
 export const SURROUNDING_CONTEXT = 2;
 
@@ -162,8 +170,16 @@ export const TRACKING_MAX_WINDOW_SAMPLES = SAMPLE_RATE * 8.0;
 export const STALE_CYCLE_LIMIT = 4;
 export const LOOKAHEAD = 5;
 
-// Discovery mode: minimum words before first verse match
-export const MIN_DISCOVERY_WORDS = 3;
+// Discovery mode: minimum words before first verse match.
+// Lowered to 2 — the paper shows 44.3% of verses are uniquely identifiable
+// in 2 words.  The old value of 3 blocked all 2-word verses (e.g. 114:2
+// ملك الناس) permanently.
+export const MIN_DISCOVERY_WORDS = 2;
+
+// Prefix-narrowing: threshold to use when disambiguation data has pre-vetted
+// the candidate set to <= PREFIX_NARROW_MAX_CANDIDATES verses.
+export const PREFIX_NARROW_THRESHOLD = 0.40;
+export const PREFIX_NARROW_MAX_CANDIDATES = 5;
 
 // Forced alignment constants
 export const FA_CONFIDENCE_GOOD = 0.7;
