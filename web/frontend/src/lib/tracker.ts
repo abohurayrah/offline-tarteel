@@ -603,14 +603,14 @@ export class RecitationTracker {
     // Minimum word count for first discovery match (prevents false positives
     // on very short / ambiguous audio). Once tracking is established, shorter
     // transcripts are fine for continuation.
-    const transcriptWords = text.split(" ").filter((w: string) => w.length > 0);
-    if (!this.hasEverMatched && transcriptWords.length < MIN_DISCOVERY_WORDS && match && match.score >= effectiveThreshold) {
+    const matchWords = matchText.split(" ").filter((w: string) => w.length > 0);
+    if (!this.hasEverMatched && matchWords.length < MIN_DISCOVERY_WORDS && match && match.score >= effectiveThreshold) {
       // Exception: muqatta'at (isolated letter) verses like يس, طه, الم,
       // كهيعص, حم, المص etc. These are 1 word of <= 5 characters.
       // A 2-word phrase like "بسم الله" (8 chars) is NOT muqatta'at.
       const isMuqattaat = match.score >= 0.95 &&
-        transcriptWords.length === 1 &&
-        transcriptWords[0].length <= 5;
+        matchWords.length === 1 &&
+        matchWords[0].length <= 5;
       if (!isMuqattaat) {
         // Not enough words yet — emit raw transcript and wait for more audio
         messages.push({
