@@ -94,6 +94,11 @@ export function showWrongButton(ctx: FeedbackContext): void {
   }, 10_000);
 }
 
+/** Open the feedback panel directly (from bottom bar wrong button) */
+export function openFeedbackPanelDirect(): void {
+  openFeedbackPanel();
+}
+
 export function hideWrongButton(): void {
   if (wrongButtonTimer) {
     clearTimeout(wrongButtonTimer);

@@ -1288,12 +1288,12 @@ function toggleAlgorithmView(): void {
   if (state.algorithmMode) {
     $algorithmView.hidden = false;
     $mushafContainer.querySelector(".mushaf-page-wrap")?.classList.add("av-hidden");
-    $mushafContainer.querySelector(".mushaf-nav")?.classList.add("av-hidden");
+    $mushafContainer.querySelector(".top-bar")?.classList.add("av-hidden");
     clearAlgorithmView();
   } else {
     $algorithmView.hidden = true;
     $mushafContainer.querySelector(".mushaf-page-wrap")?.classList.remove("av-hidden");
-    $mushafContainer.querySelector(".mushaf-nav")?.classList.remove("av-hidden");
+    $mushafContainer.querySelector(".top-bar")?.classList.remove("av-hidden");
   }
 }
 
@@ -1661,7 +1661,7 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
     if (state.algorithmMode) {
       showAlgoIdentified(msg);
     }
-    // Show "Wrong?" feedback button
+    // Show "Wrong?" feedback button (both old floating + new bottom bar)
     showWrongButton({
       audioChunks: state.sessionAudioChunks,
       transcript: state.lastRawTranscript,
@@ -1669,6 +1669,7 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
       candidates: state.lastCandidates,
       quranData: state.quranData!,
     });
+    showBottomBarWrong();
     // Route to mushaf mode or flowing mode
     if (state.mushafDataReady) {
       handleMushafVerseMatch(msg);
@@ -1800,10 +1801,13 @@ async function startAudio(): Promise<void> {
       sum += levelBuf[i] * levelBuf[i];
     }
     const rms = Math.sqrt(sum / levelBuf.length);
+    // Update mushaf page listening ring based on audio level
     if (rms > 0.01) {
+      $mushafPage.classList.add("audio-detected");
       $indicator.classList.add("audio-detected");
       $indicator.classList.remove("silence");
     } else {
+      $mushafPage.classList.remove("audio-detected");
       $indicator.classList.remove("audio-detected");
       $indicator.classList.add("silence");
     }
@@ -1812,6 +1816,8 @@ async function startAudio(): Promise<void> {
   checkLevel();
 
   state.isActive = true;
+  // Add listening ring to mushaf page
+  $mushafPage.classList.add("listening-ring");
   $indicator.classList.add("active");
 }
 
@@ -1828,7 +1834,44 @@ function stopAudio(): void {
     state.audioCtx = null;
   }
   state.isActive = false;
+  // Remove listening ring from mushaf page
+  $mushafPage.classList.remove("listening-ring", "audio-detected");
   $indicator.classList.remove("active", "audio-detected", "silence", "has-verses");
+}
+
+// ---------------------------------------------------------------------------
+// Bottom bar wrong button — slide in/out
+// ---------------------------------------------------------------------------
+let _wrongBtnTimer: ReturnType<typeof setTimeout> | null = null;
+
+function showBottomBarWrong(): void {
+  if (_wrongBtnTimer) {
+    clearTimeout(_wrongBtnTimer);
+    _wrongBtnTimer = null;
+  }
+  $btnWrong.hidden = false;
+  // Force reflow then animate in
+  void ($btnWrong as HTMLElement).offsetWidth;
+  $btnWrong.classList.add("bb-btn--wrong-visible");
+
+  // Auto-hide after 10 seconds
+  _wrongBtnTimer = setTimeout(() => {
+    hideBottomBarWrong();
+  }, 10_000);
+}
+
+function hideBottomBarWrong(): void {
+  if (_wrongBtnTimer) {
+    clearTimeout(_wrongBtnTimer);
+    _wrongBtnTimer = null;
+  }
+  $btnWrong.classList.remove("bb-btn--wrong-visible");
+  // After transition, hide entirely
+  setTimeout(() => {
+    if (!$btnWrong.classList.contains("bb-btn--wrong-visible")) {
+      $btnWrong.hidden = true;
+    }
+  }, 350);
 }
 
 // ---------------------------------------------------------------------------
@@ -1882,6 +1925,13 @@ document.addEventListener("DOMContentLoaded", () => {
   loadAlgorithmDB().catch((err) =>
     console.warn("Algorithm DB not available:", err),
   );
+
+  // Wrong button in bottom bar — opens feedback panel
+  $btnWrong.addEventListener("click", () => {
+    hideBottomBarWrong();
+    hideWrongButton();
+    openFeedbackPanelDirect();
+  });
 
   // Practice mode toggle (applies to both mushaf and flowing)
   $btnPractice.addEventListener("click", () => {
@@ -1961,6 +2011,7 @@ document.addEventListener("DOMContentLoaded", () => {
       state.recentVerseMatches = [];
       state.lastCandidates = [];
       hideWrongButton();
+      hideBottomBarWrong();
       // Reset per-event accumulators but keep verse-level tracking
       _mushafMatchedWords = new Set<number>();
       _mushafTrackingKey = "";
@@ -1995,28 +2046,29 @@ document.addEventListener("DOMContentLoaded", () => {
       try {
         await startAudio();
         // Only switch to stop-button state after audio starts successfully
-        $btnRecToggle.classList.remove("mc-btn--rec");
-        $btnRecToggle.classList.add("mc-btn--stop", "recording");
+        $btnRecToggle.classList.remove("bb-btn--rec");
+        $btnRecToggle.classList.add("bb-btn--stop", "recording");
         $btnRecToggle.title = "Stop";
         // Show initial listening state in the candidate bar
         renderCandidateListening("");
       } catch {
         // startAudio already set the permission prompt;
         // revert button to mic state so user can retry
-        $btnRecToggle.classList.remove("mc-btn--stop", "recording");
-        $btnRecToggle.classList.add("mc-btn--rec");
+        $btnRecToggle.classList.remove("bb-btn--stop", "recording");
+        $btnRecToggle.classList.add("bb-btn--rec");
         $btnRecToggle.title = "Start recitation";
       }
     } else {
       // --- Stop recording (pause — keep state) ---
       stopAudio();
-      $btnRecToggle.classList.remove("mc-btn--stop", "recording");
-      $btnRecToggle.classList.add("mc-btn--rec");
+      $btnRecToggle.classList.remove("bb-btn--stop", "recording");
+      $btnRecToggle.classList.add("bb-btn--rec");
       $btnRecToggle.title = "Start recitation";
 
       // Keep practice mode and mushaf visible so user sees their progress
-      // Hide feedback button
+      // Hide feedback button and wrong button in bottom bar
       hideWrongButton();
+      hideBottomBarWrong();
       // Clear candidate bar and any pending fade timers
       if (state.candidateMatchFadeTimer) {
         clearTimeout(state.candidateMatchFadeTimer);
@@ -2037,6 +2089,7 @@ document.addEventListener("DOMContentLoaded", () => {
     state.groups = [];
     state.revealedVerses = new Set<string>();
     hideWrongButton();
+    hideBottomBarWrong();
     // Reset mushaf tracking state
     _wordTrackedVerses.clear();
     _priorRevealDoneForPage = 0;
@@ -2063,9 +2116,10 @@ document.addEventListener("DOMContentLoaded", () => {
     $candidateList.classList.remove("visible");
 
     // Reset toggle button to mic state
-    $btnRecToggle.classList.remove("mc-btn--stop", "recording");
-    $btnRecToggle.classList.add("mc-btn--rec");
+    $btnRecToggle.classList.remove("bb-btn--stop", "recording");
+    $btnRecToggle.classList.add("bb-btn--rec");
     $btnRecToggle.title = "Start recitation";
+    hideBottomBarWrong();
 
     // Show mushaf page 1
     if (state.mushafDataReady) {
