@@ -2513,55 +2513,19 @@ body {
   }
 }
 
-/* ── Report dialog mobile fixes ── */
+/* ── Feedback panel mobile fixes ── */
 @media (max-width: 480px) {
-  #report-dialog {
-    width: calc(100% - 1rem);
-    max-height: 90dvh;
-    margin-top: 5dvh;
+  .feedback-panel {
+    max-height: 70vh;
   }
 
-  .dialog-content {
-    padding: 1rem;
-    max-height: 85dvh;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
+  .feedback-wrong-btn {
+    bottom: calc(4rem + env(safe-area-inset-bottom));
   }
 
-  .dialog-title {
-    font-size: 1.1rem;
-  }
-
-  .verse-selectors {
-    flex-direction: column;
-  }
-
-  .verse-selectors select {
-    /* Larger touch targets for select elements */
-    padding: 0.65rem;
+  .feedback-search-input,
+  .feedback-ayah-input {
     font-size: 1rem;
-  }
-
-  #report-notes {
-    font-size: 1rem;
-    padding: 0.65rem;
-    /* Prevent iOS zoom on focus */
-    max-width: 100%;
-  }
-
-  .dialog-actions {
-    flex-direction: column-reverse;
-    gap: 0.5rem;
-  }
-
-  .dialog-actions .action-btn {
-    width: 100%;
-    padding: 0.75rem;
-    text-align: center;
-  }
-
-  #report-audio {
-    width: 100%;
   }
 }
 
@@ -2682,20 +2646,45 @@ body {
     border-color: rgba(194, 160, 91, 0.15);
   }
 
-  #report-dialog {
+  .feedback-panel {
     background: var(--bg);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.4);
   }
 
-  #report-dialog::backdrop {
-    background: rgba(10, 10, 10, 0.8);
+  .feedback-overlay {
+    background: rgba(0, 0, 0, 0.7);
   }
 
-  .verse-selectors select,
-  #report-notes {
+  .feedback-search-input,
+  .feedback-ayah-input {
     background: var(--bg-warm);
     color: var(--text);
     border-color: rgba(194, 160, 91, 0.2);
+  }
+
+  .feedback-search-results {
+    background: var(--bg);
+    border-color: rgba(194, 160, 91, 0.2);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  }
+
+  .feedback-captured {
+    background: rgba(212, 176, 106, 0.08);
+  }
+
+  .feedback-verse-preview {
+    background: rgba(212, 176, 106, 0.06);
+    border-color: rgba(194, 160, 91, 0.1);
+  }
+
+  .feedback-status--success {
+    color: #66bb6a;
+    background: rgba(102, 187, 106, 0.1);
+  }
+
+  .feedback-status--error {
+    color: #ef5350;
+    background: rgba(239, 83, 80, 0.1);
   }
 
   .surah-header {
