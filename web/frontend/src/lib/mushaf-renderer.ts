@@ -105,17 +105,17 @@ function _renderHeader(el: HTMLElement, line: MushafLine): void {
   const box = document.createElement("div");
   box.className = "mp-header-box";
 
-  const ornL = document.createElement("span");
-  ornL.className = "mp-ornament";
-  ornL.textContent = "\uFD3E"; // ﴾
+  const ornR = document.createElement("span");
+  ornR.className = "mp-ornament";
+  ornR.textContent = "\uFD3F"; // ﴿ (right side in RTL = start)
 
   const name = document.createElement("span");
   name.className = "mp-header-name";
   name.textContent = line.text || "";
 
-  const ornR = document.createElement("span");
-  ornR.className = "mp-ornament";
-  ornR.textContent = "\uFD3F"; // ﴿
+  const ornL = document.createElement("span");
+  ornL.className = "mp-ornament";
+  ornL.textContent = "\uFD3E"; // ﴾ (left side in RTL = end)
 
   box.append(ornL, name, ornR);
   el.appendChild(box);
