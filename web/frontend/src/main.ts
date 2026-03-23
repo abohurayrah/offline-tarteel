@@ -1499,6 +1499,34 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // Swipe gesture for mushaf page navigation (mobile)
+  // In RTL mushaf: swipe left = next page (higher number), swipe right = prev page (lower number)
+  let _touchStartX = 0;
+  let _touchStartY = 0;
+  const SWIPE_THRESHOLD = 50;
+
+  $mushafPage.addEventListener("touchstart", (e: TouchEvent) => {
+    if (e.touches.length !== 1) return;
+    _touchStartX = e.touches[0].clientX;
+    _touchStartY = e.touches[0].clientY;
+  }, { passive: true });
+
+  $mushafPage.addEventListener("touchend", (e: TouchEvent) => {
+    if ($mushafContainer.hidden) return;
+    if (e.changedTouches.length !== 1) return;
+    const dx = e.changedTouches[0].clientX - _touchStartX;
+    const dy = e.changedTouches[0].clientY - _touchStartY;
+    // Only trigger if horizontal swipe is dominant
+    if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dx) < Math.abs(dy)) return;
+    if (dx < 0 && state.currentMushafPage < 604) {
+      // Swipe left = next page (RTL: forward in mushaf)
+      navigateToMushafPage(state.currentMushafPage + 1);
+    } else if (dx > 0 && state.currentMushafPage > 1) {
+      // Swipe right = prev page (RTL: backward in mushaf)
+      navigateToMushafPage(state.currentMushafPage - 1);
+    }
+  }, { passive: true });
+
   // Record toggle (single button: mic ↔ stop)
   $btnRecToggle.addEventListener("click", async () => {
     if (!state.modelReady) return; // Ignore clicks before model is loaded

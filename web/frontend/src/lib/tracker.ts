@@ -593,7 +593,12 @@ export class RecitationTracker {
               const haveWords = normWords.length;
               const trieUnique = narrowed.length === 1;
 
-              if (!trieUnique && requiresWords > 0 && haveWords < requiresWords) {
+              // requiresWords === -1 means the verse is NEVER uniquely identifiable
+              // in isolation (e.g., 55:13 repeats 31 times). Hold unless we have
+              // sequential context (previous verse known).
+              const neverUnique = requiresWords === -1;
+              const needsMoreWords = requiresWords > 0 && haveWords < requiresWords;
+              if (!trieUnique && (neverUnique || needsMoreWords)) {
                 // Don't emit yet — accumulate more audio and re-try.
                 // Mark as deferred so Phase 2 doesn't override this hold.
                 prefixDeferred = true;
@@ -649,11 +654,17 @@ export class RecitationTracker {
       const matchedVerseWordCount2 = this.db.getVerse(match.surah, match.ayah)?.text_words?.length ?? 0;
       const isShortVerse2 = matchedVerseWordCount2 <= 4;
 
-      // If we don't have enough words for reliable disambiguation AND the verse
-      // is not trivially short, raise the required confidence.
-      if (!isShortVerse2 && requiresWords > 0 && haveWords < requiresWords) {
+      // Never-unique verses (d=-1, e.g., 55:13 repeated 31×):
+      // Only commit if we have sequential context (previous verse → boundary resolution)
+      const neverUnique2 = requiresWords === -1;
+      if (neverUnique2 && !isShortVerse2 && !this.lastEmittedRef) {
+        match = null;
+        prefixDeferred = true;
+      }
+      // Not enough words yet per disambiguation data:
+      const needsMore2 = requiresWords > 0 && haveWords < requiresWords;
+      if (match && !isShortVerse2 && needsMore2) {
         // Require 0.75 confidence for premature Phase 2 matches
-        // (same as original FIRST_MATCH_THRESHOLD, but only for long verses)
         if (match.score < 0.75) {
           // Not confident enough — treat as deferred, fall through to raw_transcript
           match = null;
