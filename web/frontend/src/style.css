@@ -190,17 +190,29 @@ body {
   flex: 1;
   min-height: 0;
   width: 100%;
-  max-width: 700px;
   margin: 0 auto;
   display: flex;
-  align-items: stretch;
-  overflow-y: auto;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 0.25rem;
 }
 
-/* ── Mushaf page ── */
+/* ── Mushaf page ──
+   Madani mushaf aspect ratio is approximately 17:24 (w:h ≈ 0.708).
+   The page fills the available height, and width follows from aspect-ratio.
+   On narrow screens where width is the constraint, width fills and height follows.
+*/
 .mushaf-page {
-  width: 100%;
-  flex: 1;
+  /* Correct Madani mushaf proportions */
+  aspect-ratio: 17 / 24;
+  /* Fill height of wrapper, width auto from aspect-ratio */
+  height: 100%;
+  max-height: 100%;
+  /* Never exceed the wrapper width */
+  max-width: 100%;
+  /* Reasonable bounds */
+  width: auto;
   background: linear-gradient(175deg, #faf8f2 0%, #f5f0e4 100%);
   border: 1.5px solid rgba(194, 160, 91, 0.35);
   border-radius: 4px;
@@ -217,6 +229,10 @@ body {
   overflow: hidden;
   transition: opacity 0.3s ease, transform 0.3s ease,
     border-color 0.5s ease, box-shadow 0.5s ease;
+  /* Container queries: font sizes of child elements (mp-word, mp-header-name,
+     mp-basmala-text) use cqh units so they scale proportionally to the page
+     height. This ensures 15 lines fit consistently regardless of screen size. */
+  container-type: size;
 }
 
 /* Decorative inner frame */
@@ -437,10 +453,12 @@ body {
    Mushaf Page Mode — Exact Madani Mushaf layout with QPC V1 fonts
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── Lines ── */
+/* ── Lines ──
+   Each line is 1/15th of the page content area on standard pages.
+   flex: 1 distributes space evenly among lines. */
 .mp-line {
   min-height: 0;
-  flex-shrink: 1;
+  flex: 1 1 0;
   display: flex;
   align-items: center;
 }
@@ -479,30 +497,33 @@ body {
 
 .mp-header-name {
   font-family: var(--font-quran);
-  font-size: clamp(0.85rem, 2.5vw, 1.15rem);
+  font-size: clamp(0.75rem, 3cqh, 1.2rem);
   color: var(--text);
   white-space: nowrap;
-  line-height: 2;
+  line-height: 1.8;
 }
 
 .mp-ornament {
   font-family: var(--font-quran);
-  font-size: clamp(1rem, 3vw, 1.4rem);
+  font-size: clamp(0.85rem, 3.5cqh, 1.5rem);
   color: rgba(194, 160, 91, 0.55);
   line-height: 1;
 }
 
 /* ── Basmala text ── */
 .mp-basmala-text {
-  font-size: clamp(1.2rem, 3.5vw, 1.7rem);
+  font-size: clamp(1rem, 4.8cqh, 2.2rem);
   color: var(--text);
-  line-height: 1.5;
+  line-height: 1;
   letter-spacing: 0.02em;
 }
 
-/* ── QPC words ── */
+/* ── QPC words ──
+   Font size is relative to container height so that 15 lines of text
+   fit the page at any screen size. 4.8cqh ≈ 1/15th of page height
+   minus padding, which gives the right glyph size for QPC V1 fonts. */
 .mp-word {
-  font-size: clamp(1.15rem, 3.8vw, 1.85rem);
+  font-size: clamp(0.9rem, 4.8cqh, 2.4rem);
   color: var(--text);
   line-height: 1;
   transition: filter 0.4s ease, opacity 0.4s ease,
@@ -580,6 +601,63 @@ body {
   0% { filter: blur(8px); opacity: 0.12; transform: scale(0.96); }
   60% { filter: blur(0); opacity: 1; transform: scale(1.03); }
   100% { filter: blur(0); opacity: 1; transform: scale(1); }
+}
+
+/* ── Opening pages (Fatiha & first Baqarah) ──
+   Pages 1 and 2 in the Madani mushaf have a special centered layout
+   with only 7-8 lines of text, ornamental borders, and larger type.
+   The text is centered vertically within the page frame. */
+.mushaf-page[data-page="1"],
+.mushaf-page[data-page="2"] {
+  justify-content: center;
+  gap: 0.5cqh;
+  padding: 12% 8%;
+}
+
+/* Larger ornamental inner frame for opening pages */
+.mushaf-page[data-page="1"]::before,
+.mushaf-page[data-page="2"]::before {
+  inset: 10px;
+  border-width: 2px;
+  border-color: rgba(194, 160, 91, 0.25);
+  border-radius: 3px;
+}
+
+/* Slightly larger font for the opening pages (fewer lines = more space) */
+.mushaf-page[data-page="1"] .mp-word,
+.mushaf-page[data-page="2"] .mp-word {
+  font-size: clamp(1rem, 6cqh, 2.8rem);
+}
+
+.mushaf-page[data-page="1"] .mp-basmala-text,
+.mushaf-page[data-page="2"] .mp-basmala-text {
+  font-size: clamp(1rem, 6cqh, 2.6rem);
+}
+
+/* Opening page lines don't need flex:1 stretch -- use natural sizing */
+.mushaf-page[data-page="1"] .mp-line,
+.mushaf-page[data-page="2"] .mp-line {
+  flex: 0 0 auto;
+}
+
+/* Center text lines on opening pages instead of justify space-between */
+.mushaf-page[data-page="1"] .mp-line--text,
+.mushaf-page[data-page="2"] .mp-line--text {
+  justify-content: center;
+  gap: 0.3em;
+}
+
+/* Wider header box on opening pages */
+.mushaf-page[data-page="1"] .mp-header-box,
+.mushaf-page[data-page="2"] .mp-header-box {
+  padding: 0.3rem 1.5rem;
+  border-radius: 20px;
+  border-width: 1.5px;
+}
+
+.mushaf-page[data-page="1"] .mp-header-name,
+.mushaf-page[data-page="2"] .mp-header-name {
+  font-size: clamp(0.9rem, 3cqh, 1.4rem);
 }
 
 /* ── Page transition animations ── */
@@ -1284,12 +1362,15 @@ body {
 
 @media (max-width: 640px) {
   .mushaf-page {
-    padding: 1rem 0.6rem;
+    padding: 3% 3%;
     border-radius: 2px;
   }
   .mushaf-page::before { inset: 4px; }
   .mp-header-box { padding: 0.15rem 0.8rem; border-radius: 14px; }
   .mp-line--text { padding: 0 0.2rem; }
+
+  /* On narrow screens, width becomes the constraint */
+  .mushaf-page-wrap { padding: 0.15rem; }
 
   .bottom-bar-inner { gap: 0.5rem; }
   .bb-btn { width: 38px; height: 38px; }
@@ -1299,19 +1380,19 @@ body {
 }
 
 @media (max-width: 380px) {
-  .mushaf-page { padding: 0.75rem 0.4rem; }
-  .mp-header-name { font-size: 0.8rem; }
+  .mushaf-page { padding: 2.5% 2%; }
+  .mushaf-page::before { inset: 3px; }
 }
 
 @media (max-width: 375px) {
-  .mushaf-page { padding: 0.6rem 0.35rem; }
+  .mushaf-page { padding: 2% 1.5%; }
   .mushaf-page::before { inset: 3px; }
   .mp-header-box { padding: 0.1rem 0.6rem; border-radius: 12px; }
   .bottom-bar-inner { gap: 0.4rem; padding: 0 0.5rem; }
 }
 
 @media (min-width: 768px) {
-  .mushaf-page { padding: 2rem 1.5rem; }
+  .mushaf-page { padding: 4% 5%; }
   .bb-btn { width: 44px; height: 44px; }
   .bb-btn--rec, .bb-btn--stop { width: 60px; height: 60px; }
   .bb-btn--wrong.bb-btn--wrong-visible { width: 44px; }
@@ -1321,8 +1402,8 @@ body {
 @media (max-height: 500px) and (orientation: landscape) {
   #mushaf-container { padding: 0 0.5rem; }
   .top-bar { padding: 0.25rem 0; }
-  .mushaf-page { padding: 0.5rem 0.4rem; }
-  .mushaf-page-wrap { max-width: 50vw; }
+  .mushaf-page { padding: 2% 2%; }
+  .mushaf-page-wrap { padding: 0.1rem; }
   :root { --bottom-bar-height: 56px; }
   .bb-btn { width: 34px; height: 34px; }
   .bb-btn--rec, .bb-btn--stop { width: 44px; height: 44px; }
