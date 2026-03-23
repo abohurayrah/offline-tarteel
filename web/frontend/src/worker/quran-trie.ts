@@ -1,4 +1,4 @@
-import { BPETokenizer } from "./forced-alignment";
+import { BPETokenizer, stripUthmaniMarks } from "./forced-alignment";
 
 interface TrieNode {
   children: Map<number, TrieNode>;
@@ -87,16 +87,15 @@ export class QuranTrie {
    * Build trie from QuranDB verses.
    */
   buildFromVerses(verses: Array<{ text_norm: string; surah: number; ayah: number }>): void {
-    console.log(`[Trie] Building from ${verses.length} verses...`);
-
     for (const verse of verses) {
       if (!verse.text_norm) continue;
 
-      const { tokenIDs } = this.tokenizer.tokenize(verse.text_norm);
+      // Ensure Uthmani marks are stripped before tokenizing, even if the
+      // caller already stripped them. Belt-and-suspenders for safety.
+      const cleanText = stripUthmaniMarks(verse.text_norm);
+      const { tokenIDs } = this.tokenizer.tokenize(cleanText);
       this.addVerse(tokenIDs, verse.surah, verse.ayah);
     }
-
-    console.log(`[Trie] Built: ${this.totalNodes} nodes, ${verses.length} verses`);
   }
 
   get nodeCount(): number {

@@ -162,6 +162,9 @@ export const TRACKING_MAX_WINDOW_SAMPLES = SAMPLE_RATE * 5.0;
 export const STALE_CYCLE_LIMIT = 4;
 export const LOOKAHEAD = 5;
 
+// Discovery mode: minimum words before first verse match
+export const MIN_DISCOVERY_WORDS = 4;
+
 // Forced alignment constants
 export const FA_CONFIDENCE_GOOD = 0.7;
 export const FA_CONFIDENCE_WARN = 0.4;

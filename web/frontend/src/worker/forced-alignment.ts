@@ -33,6 +33,17 @@ interface TokenBoundary {
 // ── BPE Tokenizer ──
 
 /**
+ * Strip Uthmani annotation marks and diacritics that have no BPE tokens.
+ * Must match the regex in inference-fastconformer.ts and quran-db.ts normalizeArabic.
+ * Covers: U+0610-U+061A, U+064B-U+065F, U+0670, U+06D6-U+06ED
+ */
+const UTHMANI_MARKS_RE = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g;
+
+export function stripUthmaniMarks(text: string): string {
+  return text.replace(UTHMANI_MARKS_RE, "");
+}
+
+/**
  * Greedy longest-match BPE tokenizer using the existing vocab.json.
  * Handles Arabic ▁ word boundaries.
  */
@@ -65,6 +76,8 @@ export class BPETokenizer {
     tokenStrings: string[];
     wordBoundaries: WordInfo[];
   } {
+    // Strip Uthmani marks that have no BPE tokens before tokenizing
+    text = stripUthmaniMarks(text);
     // Normalize: collapse spaces, trim
     text = text.trim().replace(/\s+/g, " ");
     const arabicWords = text.split(" ");
@@ -115,10 +128,10 @@ export class BPETokenizer {
         }
 
         if (!matched) {
-          // Unknown character — skip it
-          console.warn(
-            `[FA] BPE: no token for char "${word[i]}" (U+${word.charCodeAt(i).toString(16)}) in word "${word}"`,
-          );
+          // Unknown character — skip silently.
+          // After stripping Uthmani marks, any remaining unmapped chars
+          // are rare edge cases (e.g. zero-width joiners). Logging every
+          // occurrence would flood the console with warnings.
           i++;
           isFirst = false;
         }
@@ -503,19 +516,12 @@ export class ForcedAligner {
 
     // Tokenize
     this.tokenizer = new BPETokenizer(vocabJson);
-    const { tokenIDs, tokenStrings, wordBoundaries } = this.tokenizer.tokenize(targetText);
+    const { tokenIDs, wordBoundaries } = this.tokenizer.tokenize(targetText);
     this.tokenIDs = tokenIDs;
     this.wordBoundaries = wordBoundaries;
 
     // Initialize Viterbi
     this.viterbi = new ViterbiDP(tokenIDs, blankId, vocabSize);
-
-    console.log(
-      `[FA] Initialized: "${targetText.slice(0, 40)}..." → ${tokenIDs.length} BPE tokens, ${wordBoundaries.length} words`,
-    );
-    console.log(
-      `[FA] Tokens: ${tokenStrings.join(" | ")}`,
-    );
   }
 
   get totalWords(): number {

@@ -15,6 +15,7 @@ import {
   TRACKING_MAX_WINDOW_SAMPLES,
   STALE_CYCLE_LIMIT,
   LOOKAHEAD,
+  MIN_DISCOVERY_WORDS,
 } from "./types";
 
 export interface TranscribeResult {
@@ -596,6 +597,28 @@ export class RecitationTracker {
       if (this._longVerseModeCycles > 8) {
         this._longVerseMode = false;
         this._longVerseModeCycles = 0;
+      }
+    }
+
+    // Minimum word count for first discovery match (prevents false positives
+    // on very short / ambiguous audio). Once tracking is established, shorter
+    // transcripts are fine for continuation.
+    const transcriptWords = text.split(" ").filter((w: string) => w.length > 0);
+    if (!this.hasEverMatched && transcriptWords.length < MIN_DISCOVERY_WORDS && match && match.score >= effectiveThreshold) {
+      // Exception: muqatta'at (isolated letter) verses like يس, طه, الم,
+      // كهيعص, حم, المص etc. These are 1 word of <= 5 characters.
+      // A 2-word phrase like "بسم الله" (8 chars) is NOT muqatta'at.
+      const isMuqattaat = match.score >= 0.95 &&
+        transcriptWords.length === 1 &&
+        transcriptWords[0].length <= 5;
+      if (!isMuqattaat) {
+        // Not enough words yet — emit raw transcript and wait for more audio
+        messages.push({
+          type: "raw_transcript",
+          text,
+          confidence: Math.round(match.score * 100) / 100,
+        });
+        return messages;
       }
     }
 

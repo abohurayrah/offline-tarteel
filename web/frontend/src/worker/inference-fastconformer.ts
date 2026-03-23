@@ -10,6 +10,7 @@
 import { computeMelSpectrogram } from "./mel";
 import { CTCDecoder } from "./ctc-decode";
 import { QuranTrie } from "./quran-trie";
+import { stripUthmaniMarks } from "./forced-alignment";
 import { QuranDB } from "../lib/quran-db";
 import { RecitationTracker } from "../lib/tracker";
 import type { TranscribeResult } from "../lib/tracker";
@@ -166,13 +167,11 @@ async function init() {
     // Build Quran trie for constrained decoding
     post({ type: "loading_status", message: "Building search index..." });
     trie = new QuranTrie(vocabData);
-    // Build trie from verse text — strip Uthmani annotation marks that have
-    // no BPE tokens (small waw U+06E5, small yaa U+06E6, rub el hizb U+06DE,
-    // sajdah U+06E9, and other diacritics the model never outputs)
-    const stripForBPE = (text: string) =>
-      text.replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g, "");
+    // Build trie from verse text — stripUthmaniMarks (shared helper) removes
+    // Uthmani annotation marks that have no BPE tokens (small waw U+06E5,
+    // small yaa U+06E6, rub el hizb U+06DE, sajdah U+06E9, etc.)
     const trieVerses = quranData.map((v: { text_clean?: string; text_uthmani: string; surah: number; ayah: number }) => ({
-      text_norm: stripForBPE(v.text_clean || v.text_uthmani),
+      text_norm: stripUthmaniMarks(v.text_clean || v.text_uthmani),
       surah: v.surah,
       ayah: v.ayah,
     }));
