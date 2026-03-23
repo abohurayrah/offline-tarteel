@@ -44,25 +44,30 @@ function totalProb(s: BeamState): number {
 
 export class CTCDecoder {
   private vocab: Map<number, string>;
-  private blankId: number;
+  private _blankId: number;
+
+  /** The blank token ID (last token or <blank> token) */
+  get blankId(): number { return this._blankId; }
+  /** Vocabulary size */
+  get vocabSize(): number { return this.vocab.size; }
 
   constructor(vocabJson: Record<string, string>) {
     this.vocab = new Map();
-    this.blankId = -1;
+    this._blankId = -1;
     for (const [id, token] of Object.entries(vocabJson)) {
       const numId = parseInt(id);
       this.vocab.set(numId, token);
       if (token === "<blank>") {
-        this.blankId = numId;
+        this._blankId = numId;
       }
     }
     // Fallback: blank is last token if not found by value
-    if (this.blankId === -1) {
+    if (this._blankId === -1) {
       let maxId = 0;
       for (const id of this.vocab.keys()) {
         if (id > maxId) maxId = id;
       }
-      this.blankId = maxId;
+      this._blankId = maxId;
     }
   }
 
@@ -86,7 +91,7 @@ export class CTCDecoder {
     const tokens: string[] = [];
     let prev = -1;
     for (const id of ids) {
-      if (id !== prev && id !== this.blankId) {
+      if (id !== prev && id !== this._blankId) {
         const token = this.vocab.get(id) ?? "";
         tokens.push(token);
       }
@@ -122,7 +127,7 @@ export class CTCDecoder {
   ): Hypothesis[] {
     const beamWidth = opts.beamWidth ?? 10;
     const topK = opts.topK ?? 20;
-    const blankId = this.blankId;
+    const blankId = this._blankId;
 
     // Initialize with empty prefix
     // Key = joined token IDs (e.g. "5,12,3"), value = BeamState
@@ -291,7 +296,7 @@ export class CTCDecoder {
   ): Hypothesis[] {
     const beamWidth = opts.beamWidth ?? 10;
     const topK = opts.topK ?? 20;
-    const blankId = this.blankId;
+    const blankId = this._blankId;
 
     // Initialize with empty prefix
     let beams = new Map<string, BeamState>();

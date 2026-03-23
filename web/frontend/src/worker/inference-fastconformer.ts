@@ -10,7 +10,8 @@
 import { computeMelSpectrogram } from "./mel";
 import { CTCDecoder } from "./ctc-decode";
 import { QuranTrie } from "./quran-trie";
-import { stripUthmaniMarks } from "./forced-alignment";
+import { stripUthmaniMarks, ForcedAligner } from "./forced-alignment";
+import type { WordAlignment } from "./forced-alignment";
 import { QuranDB } from "../lib/quran-db";
 import { RecitationTracker } from "../lib/tracker";
 import type { TranscribeResult } from "../lib/tracker";
@@ -25,6 +26,11 @@ let db: QuranDB | null = null;
 let session: ort.InferenceSession | null = null;
 let decoder: CTCDecoder | null = null;
 let trie: QuranTrie | null = null;
+let vocabJson: Record<string, string> | null = null;
+
+// Forced alignment state (active during tracking mode)
+let faAligner: ForcedAligner | null = null;
+let faVerse: { surah: number; ayah: number } | null = null;
 
 // Concurrency guard
 let busy = false;
@@ -34,15 +40,15 @@ function post(msg: WorkerOutbound) {
   self.postMessage(msg);
 }
 
-// ─── ONNX + CTC transcription ──────────────────────────────────────────────
+// ─── ONNX inference (shared between transcription and forced alignment) ─────
 
-async function transcribe(audio: Float32Array): Promise<TranscribeResult> {
-  if (!session || !decoder) throw new Error("Model not loaded");
-
-  // 1. Compute mel spectrogram (NeMo-compatible)
+async function runOnnx(audio: Float32Array): Promise<{
+  logprobs: Float32Array;
+  timeSteps: number;
+  vocabSize: number;
+}> {
+  if (!session) throw new Error("Model not loaded");
   const { features, timeFrames } = await computeMelSpectrogram(audio);
-
-  // 2. Run ONNX inference → CTC logprobs
   const inputTensor = new ort.Tensor("float32", features, [1, 80, timeFrames]);
   const lengthTensor = new ort.Tensor(
     "int64",
@@ -55,10 +61,63 @@ async function transcribe(audio: Float32Array): Promise<TranscribeResult> {
   };
   const results = await session.run(feeds);
   const outputTensor = results[session.outputNames[0]];
-  const logprobs = outputTensor.data as Float32Array;
   const [, timeSteps, vocabSize] = outputTensor.dims as number[];
+  return { logprobs: outputTensor.data as Float32Array, timeSteps, vocabSize };
+}
 
-  // 3. Decode: use constrained beam search if trie is available, else greedy
+// ─── CTC transcription ──────────────────────────────────────────────────────
+
+async function transcribe(audio: Float32Array): Promise<TranscribeResult> {
+  if (!decoder) throw new Error("Model not loaded");
+
+  const { logprobs, timeSteps, vocabSize } = await runOnnx(audio);
+
+  // Feed forced aligner if active (frame-accurate word tracking)
+  if (faAligner && faVerse) {
+    try {
+      const { newWords, currentWordIdx } = faAligner.processFrames(logprobs, timeSteps);
+      // Emit word_aligned for each newly confirmed word
+      for (const w of newWords) {
+        post({
+          type: "word_aligned",
+          surah: faVerse.surah,
+          ayah: faVerse.ayah,
+          word_index: w.wordIdx,
+          total_words: faAligner.totalWords,
+          confidence: w.confidence,
+          cumulative_indices: Array.from(
+            { length: w.wordIdx + 1 },
+            (_, i) => i,
+          ),
+        });
+      }
+      // Check verse completion
+      if (currentWordIdx >= faAligner.totalWords - 1) {
+        const allWords = faAligner.finalize();
+        const nextV = db?.getNextVerse(faVerse.surah, faVerse.ayah);
+        post({
+          type: "verse_complete",
+          surah: faVerse.surah,
+          ayah: faVerse.ayah,
+          overall_score: allWords.reduce((s, w) => s + w.confidence, 0) / allWords.length,
+          word_scores: allWords.map((w) => w.confidence),
+          next_surah: nextV?.surah ?? faVerse.surah,
+          next_ayah: nextV?.ayah ?? faVerse.ayah + 1,
+        });
+        // Reset aligner for next verse
+        if (nextV) {
+          startForcedAlignment(nextV.surah, nextV.ayah);
+        } else {
+          faAligner = null;
+          faVerse = null;
+        }
+      }
+    } catch {
+      // FA failure is non-fatal — text-based tracking continues
+    }
+  }
+
+  // Decode text (CTC greedy or constrained beam)
   let text: string;
   let rawTokens: string;
 
@@ -74,7 +133,6 @@ async function transcribe(audio: Float32Array): Promise<TranscribeResult> {
       text = hypotheses[0].text;
       rawTokens = hypotheses[0].rawTokens;
     } else {
-      // Fallback to greedy if constrained search returns nothing
       const greedy = decoder.decode(logprobs, timeSteps, vocabSize);
       text = greedy.text;
       rawTokens = greedy.rawTokens;
@@ -86,6 +144,26 @@ async function transcribe(audio: Float32Array): Promise<TranscribeResult> {
   }
 
   return { text, rawTokens };
+}
+
+// ─── Forced alignment control ───────────────────────────────────────────────
+
+function startForcedAlignment(surah: number, ayah: number): void {
+  if (!vocabJson || !decoder) return;
+  const verse = db?.getVerse(surah, ayah);
+  if (!verse) return;
+
+  const targetText = stripUthmaniMarks(verse.text_clean || verse.text_uthmani);
+  const blankId = decoder.blankId;
+  const vocabSize = decoder.vocabSize;
+
+  try {
+    faAligner = new ForcedAligner(targetText, vocabJson, blankId, vocabSize);
+    faVerse = { surah, ayah };
+  } catch {
+    faAligner = null;
+    faVerse = null;
+  }
 }
 
 // ─── Audio processing with concurrency guard ────────────────────────────────
@@ -114,6 +192,10 @@ async function processAudio(samples: Float32Array): Promise<void> {
     const messages = await tracker.feed(samples);
     for (const m of messages) {
       post(m);
+      // Start forced alignment when a verse is confirmed
+      if (m.type === "verse_match") {
+        startForcedAlignment(m.surah, m.ayah);
+      }
     }
 
     while (pendingChunks.length > 0) {
@@ -123,6 +205,9 @@ async function processAudio(samples: Float32Array): Promise<void> {
       const msgs = await tracker.feed(combined);
       for (const m of msgs) {
         post(m);
+        if (m.type === "verse_match") {
+          startForcedAlignment(m.surah, m.ayah);
+        }
       }
     }
   } finally {
@@ -153,6 +238,7 @@ async function init() {
     const vocabRes = await fetch("/vocab.json");
     if (!vocabRes.ok) throw new Error(`vocab.json fetch failed: ${vocabRes.status}`);
     const vocabData = await vocabRes.json();
+    vocabJson = vocabData;
     decoder = new CTCDecoder(vocabData);
     post({ type: "loading", percent: 60 });
 
@@ -223,6 +309,8 @@ self.onmessage = async (e: MessageEvent<WorkerInbound>) => {
   } else if (msg.type === "reset") {
     pendingChunks = [];
     busy = false;
+    faAligner = null;
+    faVerse = null;
     if (db) {
       tracker = new RecitationTracker(db, transcribe);
     }
