@@ -409,17 +409,22 @@ function handleMushafWordProgress(msg: WordProgressMessage): void {
     }
   }
 
-  // Use highest matched word index as the progress marker.
-  // Everything up to the highest matched word is revealed (including gaps).
-  // This handles mid-verse starts: if user reads from word 4, words 0-3 are
-  // assumed already read and words 4+ highlight progressively.
+  // Build progress marker: find the highest index we can reveal by following
+  // confirmed words with tolerance for small gaps (1-2 words).
+  // This prevents a spurious match on word 19 from revealing everything.
+  const allConfirmed = new Set([..._mushafMatchedWords, ..._mushafErrorWords]);
+  const sorted = [...allConfirmed].sort((a, b) => a - b);
   let contiguousMax = -1;
-  for (const idx of _mushafMatchedWords) {
-    if (idx > contiguousMax) contiguousMax = idx;
-  }
-  // Error words also count
-  for (const idx of _mushafErrorWords) {
-    if (idx > contiguousMax) contiguousMax = idx;
+  if (sorted.length > 0) {
+    contiguousMax = sorted[0];
+    for (let i = 1; i < sorted.length; i++) {
+      const gap = sorted[i] - sorted[i - 1] - 1;
+      if (gap <= 2) {
+        contiguousMax = sorted[i];
+      } else {
+        break;
+      }
+    }
   }
 
   // Detect skipped words (gaps) — these are likely misreads
@@ -478,7 +483,7 @@ function handleMushafWordProgress(msg: WordProgressMessage): void {
   const currentWord = verseWordMap[mushafWordIdx >= 0 ? mushafWordIdx : msg.word_index] || "";
   console.log(
     `[WORD] ${msg.surah}:${msg.ayah} word ${msg.word_index}/${msg.total_words}` +
-    (_mushafBismillahOffset > 0 ? ` (mushaf ${mushafWordIdx}/${mushafTotalWords}, bsmOffset=${_mushafBismillahOffset})` : "") +
+    (_mushafBismillahOffset > 0 ? ` (mushaf ${mushafWordIdx}/${_mushafTrackingTotal}, bsmOffset=${_mushafBismillahOffset})` : "") +
     (currentWord ? ` "${currentWord}"` : "") +
     ` new=[${msg.matched_indices.join(",")}] accumulated=[${accumulated.join(",")}] contiguous=0..${contiguousMax}` +
     (_mushafErrorWords.size > 0 ? ` errors=[${Array.from(_mushafErrorWords).join(",")}]` : ""),
@@ -494,10 +499,10 @@ function handleMushafWordProgress(msg: WordProgressMessage): void {
   mushafHighlightWord($mushafPage, msg.surah, msg.ayah, accumulated);
 
   // Mark verse as revealed only when ALL mushaf words are matched
-  if (mushafTotalWords > 0 && _mushafMatchedWords.size >= mushafTotalWords) {
+  if (_mushafTrackingTotal > 0 && _mushafMatchedWords.size >= _mushafTrackingTotal) {
     state.revealedVerses.add(key);
     console.log(
-      `%c[VERSE_COMPLETE] ${msg.surah}:${msg.ayah} — all ${mushafTotalWords} mushaf words matched`,
+      `%c[VERSE_COMPLETE] ${msg.surah}:${msg.ayah} — all ${_mushafTrackingTotal} mushaf words matched`,
       "color: #7a9a5a; font-weight: bold",
     );
   }

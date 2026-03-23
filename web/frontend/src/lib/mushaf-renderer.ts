@@ -195,19 +195,32 @@ export function highlightWord(
     w.classList.remove("mp-word--current");
   }
 
-  // Highlight all matched words AND everything before the highest matched index.
-  // This handles mid-verse starts: if the user reads from word 4, words 0-3 are
-  // assumed already read (the verse was detected because of them) and words 4+
-  // highlight progressively as word_progress confirms each one.
+  // Build a "filled" set: all confirmed matched indices plus small gaps (1-2 words).
+  // This reveals words the tracker has confirmed while allowing small alignment gaps
+  // without revealing far-ahead words that matched spuriously.
   const matched = new Set(matchedIndices);
-  const highestMatched = matchedIndices.length > 0 ? Math.max(...matchedIndices) : -1;
+  if (matched.size === 0) return;
+
+  // Find the contiguous-from-lowest: start from lowest matched index
+  // and include everything until a gap of 3+ unmatched words.
+  const sorted = [...matched].sort((a, b) => a - b);
+  let revealUpTo = sorted[0];
+  for (let i = 1; i < sorted.length; i++) {
+    const gap = sorted[i] - sorted[i - 1] - 1;
+    if (gap <= 2) {
+      // Small gap (1-2 words) — fill it, likely alignment noise
+      revealUpTo = sorted[i];
+    } else {
+      // Large gap — stop revealing, the far word is likely spurious
+      break;
+    }
+  }
 
   for (let i = 0; i < words.length; i++) {
-    if (i <= highestMatched) {
-      // Everything up to and including the highest matched word is "spoken"
+    if (i <= revealUpTo) {
       words[i].classList.add("mp-word--spoken");
       words[i].classList.remove("mp-word--hidden");
-      if (i === highestMatched && matched.has(i)) {
+      if (i === revealUpTo && matched.has(i)) {
         words[i].classList.add("mp-word--current");
       }
     }
