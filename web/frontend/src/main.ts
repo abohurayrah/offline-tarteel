@@ -3,7 +3,7 @@ import "@fontsource/amiri/700.css";
 import "@fontsource/amiri-quran/400.css";
 import "./style.css";
 
-import { initFeedback, showWrongButton, hideWrongButton } from "./feedback";
+import { initFeedback, showWrongButton, hideWrongButton, openFeedbackPanelDirect } from "./feedback";
 import { encodeWav } from "./lib/wav-encoder";
 import { QuranDB } from "./lib/quran-db";
 
@@ -136,6 +136,8 @@ const $btnRestart = document.getElementById("btn-restart")!;
 const $btnPractice = document.getElementById("btn-practice")!;
 const $candidateList = document.getElementById("candidate-list")!;
 const $app = document.getElementById("app")!;
+// Bottom bar wrong button
+const $btnWrong = document.getElementById("btn-wrong")!;
 // Algorithm view
 const $algorithmView = document.getElementById("algorithm-view")!;
 const $avTranscriptText = document.getElementById("av-transcript-text")!;
