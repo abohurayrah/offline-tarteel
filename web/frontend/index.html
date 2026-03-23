@@ -22,61 +22,30 @@
 
 <body>
   <div id="app">
+    <!-- ── Loading screen (shown until model is ready) ── -->
     <div id="loading-status">
       <p class="loading-status-main">Preparing model...</p>
       <div class="loading-progress-track">
         <div class="loading-progress-fill" id="loading-progress"></div>
       </div>
       <p class="loading-status-sub" id="loading-detail">Downloading</p>
+      <p class="loading-model-badge" id="model-status">Loading model...</p>
     </div>
+
+    <!-- ── Main reading experience ── -->
     <div id="mushaf-container" hidden>
-      <div class="mushaf-nav">
-        <button id="btn-page-next" class="nav-btn" title="Next page">&rsaquo;</button>
-        <span id="page-info">1 / 604</span>
-        <button id="btn-page-prev" class="nav-btn" title="Previous page">&lsaquo;</button>
+      <!-- Top bar: page number only -->
+      <div class="top-bar">
+        <span id="page-info" class="top-bar-page">1 / 604</span>
       </div>
+
+      <!-- Mushaf page: takes all remaining space -->
       <div class="mushaf-page-wrap">
         <div id="mushaf-page" class="mushaf-page"></div>
       </div>
-      <div class="mushaf-controls">
-        <button id="btn-practice" class="mc-btn" title="Practice Mode">
-          <svg class="practice-icon practice-icon--off" width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
-          <svg class="practice-icon practice-icon--on" width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
-            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
-            <line x1="1" y1="1" x2="23" y2="23" />
-          </svg>
-        </button>
-        <button id="btn-algo-view" class="mc-btn" title="Algorithm View">
-          <!-- Filter/funnel icon for narrowing visualization -->
-          <svg class="algo-icon algo-icon--off" width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-          </svg>
-          <svg class="algo-icon algo-icon--on" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"
-            stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-          </svg>
-        </button>
-        <button id="btn-rec-toggle" class="mc-btn mc-btn--rec" title="Start recitation">
-          <svg class="rec-icon rec-icon--mic" width="22" height="22" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-            <line x1="12" y1="19" x2="12" y2="23"/>
-            <line x1="8" y1="23" x2="16" y2="23"/>
-          </svg>
-          <svg class="rec-icon rec-icon--stop" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-            <rect x="4" y="4" width="16" height="16" rx="2"/>
-          </svg>
-        </button>
-      </div>
     </div>
+
+    <!-- Algorithm view (toggled, replaces mushaf page area) -->
     <div id="algorithm-view" hidden>
       <div class="av-section av-transcript">
         <div class="av-section-label">Raw Transcript</div>
@@ -100,7 +69,71 @@
         <div id="av-identified-stats" class="av-identified-stats"></div>
       </div>
     </div>
-    <div id="candidate-list"></div>
+
+    <!-- ── Bottom control bar (always visible, fixed) ── -->
+    <div id="bottom-bar">
+      <div class="bottom-bar-inner">
+        <!-- Left: Practice mode -->
+        <button id="btn-practice" class="bb-btn" title="Practice Mode">
+          <svg class="practice-icon practice-icon--off" width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+          <svg class="practice-icon practice-icon--on" width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+            <line x1="1" y1="1" x2="23" y2="23" />
+          </svg>
+        </button>
+
+        <!-- Center-left: Algorithm view -->
+        <button id="btn-algo-view" class="bb-btn" title="Algorithm View">
+          <svg class="algo-icon algo-icon--off" width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+          </svg>
+          <svg class="algo-icon algo-icon--on" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"
+            stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+          </svg>
+        </button>
+
+        <!-- Center: Record button (large, prominent) -->
+        <button id="btn-rec-toggle" class="bb-btn bb-btn--rec" title="Start recitation">
+          <svg class="rec-icon rec-icon--mic" width="24" height="24" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+          <svg class="rec-icon rec-icon--stop" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="4" y="4" width="16" height="16" rx="2"/>
+          </svg>
+        </button>
+
+        <!-- Center-right: Wrong button (hidden by default, slides in after verse_match) -->
+        <button id="btn-wrong" class="bb-btn bb-btn--wrong" title="Report wrong match" hidden>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </button>
+
+        <!-- Right: Page arrows -->
+        <div class="bb-nav-arrows">
+          <button id="btn-page-next" class="bb-nav-btn" title="Next page">&rsaquo;</button>
+          <button id="btn-page-prev" class="bb-nav-btn" title="Previous page">&lsaquo;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hidden elements kept for legacy flowing mode / internals -->
+    <div id="candidate-list" style="display:none"></div>
     <div id="post-recording" hidden>
       <div class="post-actions">
         <button id="btn-restart" class="action-btn action-btn--restart">Start Again</button>
@@ -108,7 +141,7 @@
     </div>
     <div id="verses"></div>
     <div id="raw-transcript"></div>
-    <div id="listening-indicator">
+    <div id="listening-indicator" style="display:none">
       <div class="pulse-ring"></div>
       <div class="pulse-ring"></div>
       <div class="pulse-ring"></div>
@@ -117,19 +150,6 @@
     <div id="permission-prompt" hidden>
       <p>Microphone access is needed to listen to your recitation.</p>
     </div>
-    <div id="offline-badge">
-      <span id="model-status">Loading model...</span>
-      <span class="badge-sep">&middot;</span>
-      on-device recognition
-    </div>
-
-    <a id="github-link" href="https://github.com/yazinsai/offline-tarteel" target="_blank" rel="noopener">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-        <path
-          d="M12 2C6.475 2 2 6.475 2 12a9.994 9.994 0 0 0 6.838 9.488c.5.087.687-.213.687-.476c0-.237-.013-1.024-.013-1.862c-2.512.463-3.162-.612-3.362-1.175c-.113-.288-.6-1.175-1.025-1.413c-.35-.187-.85-.65-.013-.662c.788-.013 1.35.725 1.538 1.025c.9 1.512 2.338 1.087 2.912.825c.088-.65.35-1.087.638-1.337c-2.225-.25-4.55-1.113-4.55-4.938c0-1.088.387-1.987 1.025-2.688c-.1-.25-.45-1.275.1-2.65c0 0 .837-.262 2.75 1.026a9.28 9.28 0 0 1 2.5-.338c.85 0 1.7.112 2.5.337c1.912-1.3 2.75-1.024 2.75-1.024c.55 1.375.2 2.4.1 2.65c.637.7 1.025 1.587 1.025 2.687c0 3.838-2.337 4.688-4.562 4.938c.362.312.675.912.675 1.85c0 1.337-.013 2.412-.013 2.75c0 .262.188.574.688.474A10.016 10.016 0 0 0 22 12c0-5.525-4.475-10-10-10Z" />
-      </svg>
-      Open source
-    </a>
 
     <!-- Feedback UI is dynamically created by feedback.ts -->
   </div>

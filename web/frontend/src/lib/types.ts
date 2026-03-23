@@ -168,7 +168,12 @@ export const TRACKING_TRIGGER_SAMPLES = SAMPLE_RATE * 1.0;
 export const TRACKING_SILENCE_SAMPLES = SAMPLE_RATE * 2.0;
 export const TRACKING_MAX_WINDOW_SAMPLES = SAMPLE_RATE * 8.0;
 export const STALE_CYCLE_LIMIT = 4;
-export const LOOKAHEAD = 5;
+export const LOOKAHEAD = 8;
+
+// Word-level similarity threshold for tracking mode.
+// Lower than the default 0.7 because in tracking mode we already know which
+// verse the user is reciting, so partial/noisy BPE output is expected.
+export const TRACKING_WORD_THRESHOLD = 0.55;
 
 // Discovery mode: minimum words before first verse match.
 // Lowered to 2 — the paper shows 44.3% of verses are uniquely identifiable

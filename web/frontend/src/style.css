@@ -1930,10 +1930,14 @@ body {
   opacity: 0;
   transform: scale(0.97);
   pointer-events: none;
+  /* Promote to own layer to avoid layout shifts during transition */
+  will-change: opacity, transform;
 }
 
 .mushaf-page--enter {
   animation: mp-page-enter 0.35s ease-out;
+  /* Promote to own layer for smooth fade-in */
+  will-change: opacity, transform;
 }
 
 @keyframes mp-page-enter {

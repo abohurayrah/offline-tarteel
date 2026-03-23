@@ -196,6 +196,9 @@ export function highlightWord(
   }
 
   // Build contiguous progress from word 0, allowing small gaps (1-2 words).
+  // A gap word is only bridged if there is a matched (or error) word after it
+  // within the gap tolerance window. This prevents extending the highlight
+  // through unmatched words when the next matched word is far away.
   const matched = new Set(matchedIndices);
   if (matched.size === 0) return;
 
@@ -208,7 +211,23 @@ export function highlightWord(
     } else {
       gapCount++;
       if (gapCount > 2) break;
-      if (revealUpTo >= 0) revealUpTo = i;
+      // Only bridge the gap if a matched/error word exists within the next
+      // (3 - gapCount) positions. Without this lookahead, a gap at the end
+      // of the matched region would spuriously extend the highlight.
+      if (revealUpTo >= 0) {
+        let hasBridge = false;
+        for (let k = i + 1; k <= i + (3 - gapCount) && k < words.length; k++) {
+          if (matched.has(k) || words[k].classList.contains("mp-word--error")) {
+            hasBridge = true;
+            break;
+          }
+        }
+        if (hasBridge) {
+          revealUpTo = i;
+        } else {
+          break;
+        }
+      }
     }
   }
 

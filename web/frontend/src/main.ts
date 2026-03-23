@@ -227,16 +227,33 @@ async function navigateToMushafPage(pageNum: number): Promise<void> {
   ($btnPagePrev as HTMLButtonElement).disabled = pageNum >= 604;
   ($btnPageNext as HTMLButtonElement).disabled = pageNum <= 1;
 
-  // Transition: fade out, render, fade in
+  // Transition: fade out using CSS transition (synced via transitionend, not setTimeout).
+  // Lock the container height to prevent layout shifts during re-render.
+  const currentHeight = $mushafPage.offsetHeight;
+  if (currentHeight > 0) {
+    $mushafPage.style.minHeight = `${currentHeight}px`;
+  }
+
   $mushafPage.classList.add("mushaf-page--exit");
-  await new Promise((r) => setTimeout(r, 150));
+  await new Promise<void>((resolve) => {
+    const onEnd = () => {
+      $mushafPage.removeEventListener("transitionend", onEnd);
+      resolve();
+    };
+    $mushafPage.addEventListener("transitionend", onEnd);
+    // Fallback timeout in case transitionend doesn't fire (e.g. no transition)
+    setTimeout(resolve, 350);
+  });
 
   const page = state.mushafPages[pageNum - 1];
   await renderMushafPage($mushafPage, page, state.revealedVerses, state.practiceMode);
 
-  // After re-rendering, restore word highlights for the currently-tracked verse
-  // if it's on this page. The DOM was recreated by renderPage, so mp-word--spoken
-  // classes were lost. Re-apply them from the monotonic accumulator.
+  // After re-rendering, restore word highlights for ALL revealed verses on this page.
+  // The DOM was recreated by renderPage, so mp-word--spoken classes were lost for
+  // previously completed verses. Restore them so previous verses stay fully visible.
+  _restoreRevealedVerseHighlights(pageNum);
+
+  // Also restore the currently-tracked verse's word-by-word progress
   if (_mushafTrackingKey && _mushafMatchedWords.size > 0) {
     const [ts, ta] = _mushafTrackingKey.split(":");
     const trackingPage = getPageForVerse(parseInt(ts), parseInt(ta));
@@ -246,9 +263,41 @@ async function navigateToMushafPage(pageNum: number): Promise<void> {
     }
   }
 
+  // Release height lock and fade in
+  $mushafPage.style.minHeight = "";
   $mushafPage.classList.remove("mushaf-page--exit");
   $mushafPage.classList.add("mushaf-page--enter");
-  setTimeout(() => $mushafPage.classList.remove("mushaf-page--enter"), 350);
+
+  // Use animationend to clean up the enter class (synced with CSS animation)
+  const onAnimEnd = () => {
+    $mushafPage.removeEventListener("animationend", onAnimEnd);
+    $mushafPage.classList.remove("mushaf-page--enter");
+  };
+  $mushafPage.addEventListener("animationend", onAnimEnd);
+  // Fallback in case animationend doesn't fire
+  setTimeout(() => $mushafPage.classList.remove("mushaf-page--enter"), 400);
+}
+
+// Restore mp-word--spoken and mp-word--revealed state for all revealed verses on a page.
+// Called after renderPage re-creates the DOM, which strips runtime classes.
+function _restoreRevealedVerseHighlights(pageNum: number): void {
+  if (!state.mushafPages) return;
+  const pageData = state.mushafPages[pageNum - 1];
+  const pageVerses = getPageVerses(pageData);
+
+  for (const vk of pageVerses) {
+    if (state.revealedVerses.has(vk)) {
+      const [s, a] = vk.split(":");
+      mushafRevealVerse($mushafPage, parseInt(s), parseInt(a));
+      // Also mark as spoken so they stay fully visible in practice mode
+      const words = $mushafPage.querySelectorAll<HTMLElement>(
+        `.mp-word[data-surah="${s}"][data-ayah="${a}"]`,
+      );
+      for (const w of words) {
+        w.classList.add("mp-word--spoken");
+      }
+    }
+  }
 }
 
 // Track which verses actually had word progress (not just verse_match)
@@ -387,7 +436,7 @@ function _computeBismillahOffset(surah: number, ayah: number): number {
 }
 
 // Handle word progress in mushaf mode — reveal words one at a time
-function handleMushafWordProgress(msg: WordProgressMessage): void {
+async function handleMushafWordProgress(msg: WordProgressMessage): Promise<void> {
   const targetPage = getPageForVerse(msg.surah, msg.ayah);
 
   if (!targetPage) {
@@ -395,10 +444,12 @@ function handleMushafWordProgress(msg: WordProgressMessage): void {
     return;
   }
   if (targetPage !== state.currentMushafPage) {
-    console.warn(
-      `[WORD] ${msg.surah}:${msg.ayah} word ${msg.word_index}/${msg.total_words} — wrong page (verse on p${targetPage}, showing p${state.currentMushafPage})`,
+    // Cross-page verse continuation: auto-navigate to the correct page.
+    // This handles the case where verse N+1 starts on the next page.
+    console.log(
+      `[WORD] ${msg.surah}:${msg.ayah} word ${msg.word_index}/${msg.total_words} — auto-navigating p${state.currentMushafPage} → p${targetPage}`,
     );
-    return;
+    await navigateToMushafPage(targetPage);
   }
 
   // Accumulate matched indices across events for the same verse.
@@ -443,19 +494,34 @@ function handleMushafWordProgress(msg: WordProgressMessage): void {
 
   // Build contiguous progress from word 0 forward.
   // Follow confirmed words, allowing small gaps (1-2 words = alignment noise).
-  // Stop at gaps of 3+ unmatched words.
+  // Stop at gaps of 3+ unmatched words, or if a gap has no matched word after it
+  // within the tolerance window (prevents spurious gap extension at the frontier).
+  const totalMushafWords = msg.total_words - _mushafBismillahOffset;
   const allConfirmed = new Set([..._mushafMatchedWords, ..._mushafErrorWords]);
   let contiguousMax = -1;
   let gapCount = 0;
-  for (let i = 0; i < (msg.total_words - _mushafBismillahOffset); i++) {
+  for (let i = 0; i < totalMushafWords; i++) {
     if (allConfirmed.has(i)) {
       contiguousMax = i;
       gapCount = 0;
     } else {
       gapCount++;
       if (gapCount > 2) break; // stop at gaps of 3+
-      // Small gap — extend contiguousMax to cover it
-      if (contiguousMax >= 0) contiguousMax = i;
+      // Small gap — only extend if a confirmed word follows within the window
+      if (contiguousMax >= 0) {
+        let hasBridge = false;
+        for (let k = i + 1; k <= i + (3 - gapCount) && k < totalMushafWords; k++) {
+          if (allConfirmed.has(k)) {
+            hasBridge = true;
+            break;
+          }
+        }
+        if (hasBridge) {
+          contiguousMax = i;
+        } else {
+          break;
+        }
+      }
     }
   }
 
@@ -1614,7 +1680,7 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
     });
     // Route to mushaf mode or flowing mode
     if (state.mushafDataReady) {
-      handleMushafWordProgress(msg);
+      void handleMushafWordProgress(msg);
     } else {
       handleWordProgress(msg);
     }

@@ -1,4 +1,4 @@
-import { ratio as levRatio } from "./levenshtein";
+import { ratio as levRatio, phoneticRatio } from "./levenshtein";
 import { QuranDB, partialRatio, normalizeArabic } from "./quran-db";
 import type { QuranVerse, WorkerOutbound, SurroundingVerse, CandidateVerse, VerseMatch, VerseMatchCandidate } from "./types";
 import {
@@ -16,6 +16,7 @@ import {
   TRACKING_MAX_WINDOW_SAMPLES,
   STALE_CYCLE_LIMIT,
   LOOKAHEAD,
+  TRACKING_WORD_THRESHOLD,
   MIN_DISCOVERY_WORDS,
   PREFIX_NARROW_THRESHOLD,
   PREFIX_NARROW_MAX_CANDIDATES,
@@ -47,31 +48,49 @@ function isSilence(audio: Float32Array): boolean {
 function wordsMatch(w1: string, w2: string, threshold = 0.7): boolean {
   if (w1 === w2) return true;
   if (w1.length <= 2 || w2.length <= 2) return w1 === w2;
-  return levRatio(w1, w2) >= threshold;
+  // Use the better of plain Levenshtein and phonetic-aware ratio.
+  // Arabic ASR often confuses acoustically similar letters (e.g. ص/س, ط/ت)
+  // which inflates plain Levenshtein distance but should be "close".
+  const plain = levRatio(w1, w2);
+  if (plain >= threshold) return true;
+  return phoneticRatio(w1, w2) >= threshold;
 }
 
 function alignPosition(
   recognizedWords: string[],
   verseWords: string[],
   startFrom = 0,
+  threshold = TRACKING_WORD_THRESHOLD,
+  priorMatchedIndices?: Set<number>,
 ): { position: number; matchedIndices: number[] } {
   if (!recognizedWords.length || !verseWords.length) {
     return { position: 0, matchedIndices: [] };
   }
 
-  const matchedIndices: number[] = [];
-  let versePtr = startFrom;
+  // --- Pass 1: forward scan from startFrom ---
+  let matchedIndices = _scanForward(recognizedWords, verseWords, startFrom, threshold);
 
-  for (const rec of recognizedWords) {
-    if (versePtr >= verseWords.length) break;
-    const limit = Math.min(versePtr + LOOKAHEAD, verseWords.length);
-    for (let j = versePtr; j < limit; j++) {
-      if (wordsMatch(rec, verseWords[j])) {
-        matchedIndices.push(j);
-        versePtr = j + 1;
-        break;
-      }
+  // --- Pass 2: re-alignment from the beginning if Pass 1 found nothing ---
+  // BPE output may not align starting from startFrom because the model
+  // re-decodes the entire audio window each cycle.  If the forward scan
+  // from the last tracked position found nothing, try again from word 0.
+  // This recovers alignment when the model skips or re-orders words.
+  if (matchedIndices.length === 0 && startFrom > 0) {
+    matchedIndices = _scanForward(recognizedWords, verseWords, 0, threshold);
+    // Only keep results that are at or beyond the prior tracked position
+    // to prevent backward jumps (monotonic progress).
+    if (priorMatchedIndices && priorMatchedIndices.size > 0) {
+      matchedIndices = matchedIndices.filter(idx => !priorMatchedIndices.has(idx));
     }
+  }
+
+  // --- Monotonic merge with prior matched indices ---
+  // Combine with any previously matched indices to prevent regression.
+  // Once a word is matched, it stays matched.
+  if (priorMatchedIndices && priorMatchedIndices.size > 0) {
+    const merged = new Set(priorMatchedIndices);
+    for (const idx of matchedIndices) merged.add(idx);
+    matchedIndices = Array.from(merged).sort((a, b) => a - b);
   }
 
   if (matchedIndices.length) {
@@ -81,6 +100,48 @@ function alignPosition(
     };
   }
   return { position: startFrom, matchedIndices: [] };
+}
+
+/** Forward scan: match each recognized word to the next available verse word. */
+function _scanForward(
+  recognizedWords: string[],
+  verseWords: string[],
+  startFrom: number,
+  threshold: number,
+): number[] {
+  const matchedIndices: number[] = [];
+  let versePtr = startFrom;
+
+  for (const rec of recognizedWords) {
+    if (versePtr >= verseWords.length) break;
+    const limit = Math.min(versePtr + LOOKAHEAD, verseWords.length);
+    let bestIdx = -1;
+    let bestScore = 0;
+
+    // Find the best matching verse word within the lookahead window.
+    // Instead of accepting the first match, pick the highest-scoring one
+    // to avoid greedy mis-alignment (e.g. matching a distant word at 0.56
+    // when the immediate next word scores 0.9).
+    for (let j = versePtr; j < limit; j++) {
+      if (wordsMatch(rec, verseWords[j], threshold)) {
+        const score = levRatio(rec, verseWords[j]);
+        // Prefer closer words: apply a small proximity bonus (0.02 per position)
+        // so that equally-scored words closer to the current position win.
+        const adjustedScore = score + (limit - j) * 0.02;
+        if (adjustedScore > bestScore) {
+          bestScore = adjustedScore;
+          bestIdx = j;
+        }
+      }
+    }
+
+    if (bestIdx >= 0) {
+      matchedIndices.push(bestIdx);
+      versePtr = bestIdx + 1;
+    }
+  }
+
+  return matchedIndices;
 }
 
 function getSurroundingVerses(
@@ -119,6 +180,11 @@ export class RecitationTracker {
   private trackingLastWordIdx = -1;
   private silenceSamples = 0;
   private staleCycles = 0;
+  // Monotonic set of matched word indices for the current verse.
+  // Indices are only ever added, never removed during a single verse.
+  // This prevents regression where re-decoded BPE output drops previously
+  // matched words and causes the highlight to jump backward.
+  private trackingMatchedIndices: Set<number> = new Set();
 
   // Verse transition anti-bounce state
   private transitionCooldown = 0;       // cycles to suppress backward jumps after verse advance
@@ -214,10 +280,13 @@ export class RecitationTracker {
       this.transitionCooldown--;
     }
 
-    // Grace period after verse transition — skip inference to let stale audio flush
-    if (this.transitionGraceCycles > 0) {
+    // Grace period after verse transition — instead of skipping inference entirely
+    // (which caused a visible pause in highlighting), we run inference but suppress
+    // backward position jumps. This lets forward progress continue immediately while
+    // preventing stale audio from the previous verse from causing regressions.
+    const inGracePeriod = this.transitionGraceCycles > 0;
+    if (inGracePeriod) {
       this.transitionGraceCycles--;
-      return messages;
     }
 
     // Transcribe and normalize Arabic
@@ -232,12 +301,19 @@ export class RecitationTracker {
 
     const recognizedWords = text.split(" ");
 
-    // Align against known verse (using normalized Arabic words)
+    // Align against known verse (using normalized Arabic words).
+    // Pass the lower TRACKING_WORD_THRESHOLD (0.55) since we already know which
+    // verse the user is reciting — partial/noisy BPE output is expected.
+    // Also pass the monotonic accumulated set so alignPosition can:
+    //   a) merge prior matches (preventing regression)
+    //   b) fall back to a full re-scan from word 0 if forward scan fails
     const resumeFrom = Math.max(this.trackingLastWordIdx, 0);
     let { matchedIndices } = alignPosition(
       recognizedWords,
       this.trackingVerseWords,
       resumeFrom,
+      TRACKING_WORD_THRESHOLD,
+      this.trackingMatchedIndices,
     );
 
     // Fallback: character-level progress when word alignment fails
@@ -247,6 +323,25 @@ export class RecitationTracker {
       const charWordIdx = this._charLevelProgress(text);
       if (charWordIdx > this.trackingLastWordIdx) {
         matchedIndices = [charWordIdx];
+      }
+    }
+
+    // Monotonic accumulation: add all new matched indices to the persistent set.
+    // This ensures once a word is matched, it stays matched across cycles even if
+    // the BPE decoder re-segments differently on the next cycle.
+    for (const idx of matchedIndices) {
+      this.trackingMatchedIndices.add(idx);
+    }
+
+    // During grace period, suppress results that don't advance past the current
+    // position. Stale audio from the previous verse can produce matches that align
+    // to early words of the new verse — filtering these avoids regressions while
+    // still allowing genuine forward progress from fresh audio.
+    if (inGracePeriod && matchedIndices.length > 0) {
+      const best = matchedIndices[matchedIndices.length - 1];
+      if (best <= this.trackingLastWordIdx) {
+        // All matches are at or behind current position — suppress
+        matchedIndices = [];
       }
     }
 
@@ -373,7 +468,11 @@ export class RecitationTracker {
       }
     }
 
-    // Send word_progress if advanced
+    // Send word_progress if advanced.
+    // Always send the FULL accumulated set of matched indices (not just this cycle's)
+    // so the UI can maintain a consistent, monotonically growing highlight.
+    const allMatched = Array.from(this.trackingMatchedIndices).sort((a, b) => a - b);
+
     if (advanced) {
       this.trackingLastWordIdx =
         matchedIndices[matchedIndices.length - 1];
@@ -384,9 +483,8 @@ export class RecitationTracker {
         ayah: this.trackingVerse!.ayah,
         word_index: wordPos,
         total_words: this.trackingVerseWords.length,
-        matched_indices: matchedIndices,
+        matched_indices: allMatched,
       });
-
     }
 
     // Check if verse is complete
@@ -394,7 +492,8 @@ export class RecitationTracker {
     // This prevents jumping to the next verse after only tracking 1-2 words
     // of a long verse (e.g. 13:13 has 19 words — matching 1 word near the end
     // should not trigger advancement).
-    const wordCoverageRatio = matchedIndices.length / this.trackingVerseWords.length;
+    // Use the accumulated set size (not just this cycle's matches) for coverage.
+    const wordCoverageRatio = allMatched.length / this.trackingVerseWords.length;
     if (matchedIndices.length > 0 && wordCoverageRatio >= 0.3) {
       const cumulativeCoverage =
         (this.trackingLastWordIdx + 1) / this.trackingVerseWords.length;
@@ -1034,6 +1133,7 @@ export class RecitationTracker {
     this.trackingVerse = verse;
     this.trackingVerseWords = verse.text_words!;
     this.trackingLastWordIdx = -1;
+    this.trackingMatchedIndices = new Set();
     this.silenceSamples = 0;
     this.staleCycles = 0;
     this.accumulatedText = "";
@@ -1087,6 +1187,7 @@ export class RecitationTracker {
     this.trackingVerse = null;
     this.trackingVerseWords = [];
     this.trackingLastWordIdx = -1;
+    this.trackingMatchedIndices = new Set();
     this.silenceSamples = 0;
     this.staleCycles = 0;
     this.accumulatedText = "";
