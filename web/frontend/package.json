@@ -15,6 +15,7 @@
     "benchmark": "tsx test/benchmark-fastconformer.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1014.0",
     "@fontsource/amiri": "^5.2.8",
     "@fontsource/amiri-quran": "^5.2.10",
     "@hono/node-server": "^1.19.9",
