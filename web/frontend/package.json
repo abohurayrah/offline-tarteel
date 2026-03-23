@@ -12,11 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:unit": "vitest run test/unit/",
-    "test:streaming": "tsx test/validate-streaming.ts",
-    "test:onnx": "tsx test/test-onnx-smoke.ts",
-    "test:onnx:all": "tsx test/test-onnx-smoke.ts --all",
-    "benchmark:whisper": "tsx test/benchmark-whisper.ts",
-    "benchmark:compare": "tsx test/compare-benchmarks.ts"
+    "benchmark": "tsx test/benchmark-fastconformer.ts"
   },
   "dependencies": {
     "@fontsource/amiri": "^5.2.8",

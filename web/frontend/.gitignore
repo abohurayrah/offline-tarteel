@@ -20,8 +20,14 @@ public/mushaf-layout/
 public/.cache/
 
 # ONNX model weights (large, downloaded separately)
-public/models/whisper-quran/onnx/
+public/models/
 *.onnx
+
+# Test audio samples (large, not code)
+test/audio-samples/
+
+# Benchmark results (generated data)
+test/benchmark-results/
 
 # Editor directories and files
 .vscode/*
