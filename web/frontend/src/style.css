@@ -48,7 +48,7 @@ body {
 #app {
   max-width: var(--max-width);
   margin: 0 auto;
-  padding: 3rem 1.5rem 8rem;
+  padding: 3rem 1.5rem calc(8rem + env(safe-area-inset-bottom));
   min-height: 100vh;
   min-height: 100dvh;
   position: relative;
@@ -1363,12 +1363,19 @@ body {
   background: transparent;
   border: 1px solid rgba(194, 160, 91, 0.25);
   border-radius: 8px;
-  padding: 0.45rem 0.9rem;
-  font-size: 1.1rem;
+  /* Minimum 44x44px touch target per WCAG */
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.5rem 1rem;
+  font-size: 1.2rem;
   color: var(--text-muted);
   cursor: pointer;
   transition: all 0.2s ease;
   line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .nav-btn:hover {
@@ -1398,6 +1405,9 @@ body {
   width: 100%;
   max-width: 560px;
   margin: 0 auto;
+  /* Allow scrolling within the page area if it overflows */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* ── Mushaf page (the actual page) ── */
@@ -1419,6 +1429,9 @@ body {
   position: relative;
   overflow: hidden;
   transition: opacity 0.3s ease, transform 0.3s ease;
+  /* Prevent page from pushing controls off-screen on small phones.
+     Leave room for nav bar (~44px), controls bar (~60px), and badge (~40px). */
+  max-height: calc(100dvh - 12rem);
 }
 
 /* Decorative inner frame */
@@ -1638,8 +1651,10 @@ body {
   }
 
   .nav-btn {
-    padding: 0.35rem 0.7rem;
-    font-size: 1rem;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0.4rem 0.75rem;
+    font-size: 1.1rem;
   }
 
   .mp-line--text {
@@ -1764,4 +1779,313 @@ body {
 
 .recording .rec-icon--stop {
   display: block;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Mobile Responsiveness — Landscape, safe areas, touch, report dialog
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Phone landscape mode ── */
+@media (max-height: 500px) and (orientation: landscape) {
+  #app {
+    padding: 1rem 1rem 5rem;
+  }
+
+  /* Drastically reduce mushaf page in landscape */
+  .mushaf-page {
+    max-height: calc(100dvh - 8rem);
+    aspect-ratio: auto;
+    padding: 0.75rem 0.5rem;
+  }
+
+  .mushaf-page-wrap {
+    max-width: 50vw;
+  }
+
+  #mushaf-container {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
+  /* Put nav and controls side-by-side in landscape */
+  .mushaf-nav {
+    gap: 0.5rem;
+    font-size: 0.7rem;
+  }
+
+  .mushaf-controls {
+    padding: 0.15rem 0;
+  }
+
+  .mc-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .mc-btn--rec,
+  .mc-btn--stop {
+    width: 46px;
+    height: 46px;
+  }
+
+  /* Shrink nav buttons in landscape */
+  .nav-btn {
+    min-width: 38px;
+    min-height: 38px;
+    padding: 0.3rem 0.6rem;
+    font-size: 1rem;
+  }
+
+  /* Hide non-essential chrome in landscape */
+  #offline-badge {
+    display: none;
+  }
+
+  #github-link {
+    display: none;
+  }
+
+  #listening-indicator {
+    bottom: calc(0.5rem + env(safe-area-inset-bottom));
+  }
+
+  #listening-indicator.has-verses {
+    display: none;
+  }
+}
+
+/* ── Sticky controls safe-area on mobile ── */
+@media (max-width: 640px) {
+  .mushaf-controls {
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+  }
+
+  /* Ensure github link does not overlap with candidate bar */
+  #github-link {
+    bottom: calc(0.5rem + env(safe-area-inset-bottom));
+    font-size: 0.7rem;
+    padding: 0.25rem 0.5rem;
+  }
+
+  /* Hide github link when candidate bar is showing */
+  #candidate-list.visible ~ #github-link {
+    display: none;
+  }
+}
+
+/* ── Report dialog mobile fixes ── */
+@media (max-width: 480px) {
+  #report-dialog {
+    width: calc(100% - 1rem);
+    max-height: 90dvh;
+    margin-top: 5dvh;
+  }
+
+  .dialog-content {
+    padding: 1rem;
+    max-height: 85dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .dialog-title {
+    font-size: 1.1rem;
+  }
+
+  .verse-selectors {
+    flex-direction: column;
+  }
+
+  .verse-selectors select {
+    /* Larger touch targets for select elements */
+    padding: 0.65rem;
+    font-size: 1rem;
+  }
+
+  #report-notes {
+    font-size: 1rem;
+    padding: 0.65rem;
+    /* Prevent iOS zoom on focus */
+    max-width: 100%;
+  }
+
+  .dialog-actions {
+    flex-direction: column-reverse;
+    gap: 0.5rem;
+  }
+
+  .dialog-actions .action-btn {
+    width: 100%;
+    padding: 0.75rem;
+    text-align: center;
+  }
+
+  #report-audio {
+    width: 100%;
+  }
+}
+
+/* ── Prevent iOS zoom on input focus (font-size must be >= 16px) ── */
+@supports (-webkit-touch-callout: none) {
+  select,
+  textarea,
+  input {
+    font-size: max(1rem, 16px);
+  }
+}
+
+/* ── Small Android / iPhone SE (360-375px) ── */
+@media (max-width: 375px) {
+  #app {
+    padding: 1.5rem 0.5rem 6rem;
+  }
+
+  .mushaf-page {
+    padding: 0.75rem 0.4rem;
+  }
+
+  .mushaf-page::before {
+    inset: 3px;
+  }
+
+  .mp-header-box {
+    padding: 0.1rem 0.6rem;
+    border-radius: 12px;
+  }
+
+  /* Further reduce nav button size, but keep touch-friendly */
+  .nav-btn {
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0.35rem 0.5rem;
+  }
+}
+
+/* ── Tablet adjustments (768px+) ── */
+@media (min-width: 768px) {
+  .mushaf-page-wrap {
+    max-width: 560px;
+  }
+
+  .mushaf-page {
+    /* On tablets, the max-height can be more generous */
+    max-height: calc(100dvh - 10rem);
+    padding: 2rem 1.5rem;
+  }
+
+  /* Larger touch targets on tablet for nav */
+  .nav-btn {
+    min-width: 48px;
+    min-height: 48px;
+    padding: 0.6rem 1.2rem;
+    font-size: 1.3rem;
+  }
+
+  .mc-btn {
+    width: 48px;
+    height: 48px;
+  }
+
+  .mc-btn--rec,
+  .mc-btn--stop {
+    width: 56px;
+    height: 56px;
+  }
+}
+
+/* ── iPad Pro 12.9" (1024px+) ── */
+@media (min-width: 1024px) {
+  .mushaf-page-wrap {
+    max-width: 600px;
+  }
+
+  .mushaf-page {
+    max-height: calc(100dvh - 8rem);
+  }
+}
+
+/* ── Dark mode ── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1A1918;
+    --bg-warm: #252320;
+    --text: #E8E4DC;
+    --text-light: #B8B2A6;
+    --text-muted: #7A7468;
+    --text-faint: #4A463E;
+    --accent-gold: #D4B06A;
+    --accent-gold-glow: rgba(212, 176, 106, 0.4);
+    --accent-warm: rgba(212, 176, 106, 0.1);
+    --accent-warm-strong: rgba(212, 176, 106, 0.18);
+  }
+
+  .mushaf-page {
+    background: linear-gradient(175deg, #242220 0%, #1E1C1A 100%);
+    border-color: rgba(194, 160, 91, 0.25);
+    box-shadow:
+      0 2px 16px rgba(0, 0, 0, 0.2),
+      0 0 0 1px rgba(194, 160, 91, 0.06),
+      inset 0 0 80px rgba(194, 160, 91, 0.02);
+  }
+
+  .mushaf-page::before {
+    border-color: rgba(194, 160, 91, 0.08);
+  }
+
+  #offline-badge {
+    background: rgba(26, 25, 24, 0.9);
+    border-color: rgba(194, 160, 91, 0.15);
+  }
+
+  #github-link {
+    background: rgba(26, 25, 24, 0.9);
+    border-color: rgba(194, 160, 91, 0.15);
+  }
+
+  #report-dialog {
+    background: var(--bg);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  }
+
+  #report-dialog::backdrop {
+    background: rgba(10, 10, 10, 0.8);
+  }
+
+  .verse-selectors select,
+  #report-notes {
+    background: var(--bg-warm);
+    color: var(--text);
+    border-color: rgba(194, 160, 91, 0.2);
+  }
+
+  .surah-header {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+
+  .verse-group {
+    background: var(--bg);
+    box-shadow:
+      0 4px 20px rgba(0, 0, 0, 0.15),
+      0 1px 4px rgba(0, 0, 0, 0.1);
+  }
+
+  .mp-header-box {
+    background: linear-gradient(180deg,
+        rgba(226, 195, 126, 0.06) 0%,
+        rgba(226, 195, 126, 0.02) 100%);
+  }
+
+  .bismillah-separator::before {
+    background: var(--bg);
+  }
+
+  .mp-word--current {
+    color: #D4B06A;
+  }
+
+  .verse--active .word--current {
+    color: #D4B06A;
+  }
 }
