@@ -212,15 +212,62 @@ export function highlightWord(
     }
   }
 
+  let currentWordEl: HTMLElement | null = null;
   for (let i = 0; i < words.length; i++) {
     if (i <= revealUpTo) {
       words[i].classList.add("mp-word--spoken");
       words[i].classList.remove("mp-word--hidden");
       if (i === revealUpTo && matched.has(i)) {
         words[i].classList.add("mp-word--current");
+        currentWordEl = words[i];
       }
     }
   }
+
+  // When all words of the verse are spoken, mark the last word (ayah marker)
+  // with a completion style.
+  const allSpoken = words.every(
+    (w) =>
+      w.classList.contains("mp-word--spoken") ||
+      w.classList.contains("mp-word--error"),
+  );
+  if (allSpoken && words.length > 0) {
+    const lastWord = words[words.length - 1];
+    lastWord.classList.add("mp-word--verse-done");
+  }
+
+  // Smooth scroll so the current word stays visible within the mushaf page.
+  if (currentWordEl) {
+    _scrollToWord(container, currentWordEl);
+  }
+}
+
+// Scroll the mushaf page wrapper so the target word is visible.
+// Uses a debounce to avoid jittery scrolling on rapid word updates.
+let _scrollTimer: ReturnType<typeof setTimeout> | null = null;
+
+function _scrollToWord(container: HTMLElement, word: HTMLElement): void {
+  if (_scrollTimer) clearTimeout(_scrollTimer);
+  _scrollTimer = setTimeout(() => {
+    const scrollParent = container.closest(".mushaf-page-wrap");
+    if (!scrollParent) return;
+    const parentRect = scrollParent.getBoundingClientRect();
+    const wordRect = word.getBoundingClientRect();
+
+    // Only scroll if the word is outside the visible area (with some padding).
+    const pad = parentRect.height * 0.15;
+    if (wordRect.top < parentRect.top + pad || wordRect.bottom > parentRect.bottom - pad) {
+      const targetScroll =
+        scrollParent.scrollTop +
+        (wordRect.top - parentRect.top) -
+        parentRect.height / 2 +
+        wordRect.height / 2;
+      scrollParent.scrollTo({
+        top: Math.max(0, targetScroll),
+        behavior: "smooth",
+      });
+    }
+  }, 80);
 }
 
 // ── Error highlighting (misread words) ──

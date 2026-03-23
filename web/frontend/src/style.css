@@ -1799,52 +1799,87 @@ body {
   font-size: clamp(1.15rem, 3.8vw, 1.85rem);
   color: var(--text);
   line-height: 1;
-  transition: filter 0.4s ease, opacity 0.4s ease,
-    color 0.3s ease, text-shadow 0.3s ease, transform 0.2s ease;
+  transition:
+    filter 0.45s cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 0.45s cubic-bezier(0.23, 1, 0.32, 1),
+    color 0.35s ease,
+    text-shadow 0.35s ease,
+    transform 0.3s cubic-bezier(0.23, 1, 0.32, 1);
   cursor: default;
   white-space: nowrap;
 }
 
-/* Hidden word (practice mode) */
+/* Hidden word (practice mode) — blurred and faded */
 .mp-word--hidden {
   filter: blur(8px);
   opacity: 0.12;
+  transform: scale(0.97);
   user-select: none;
   pointer-events: none;
 }
 
-/* Just-revealed word */
+/* Just-revealed word (verse revealed after completion) */
 .mp-word--revealed {
   animation: mp-reveal 0.5s cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-/* Spoken word (recited) */
+/* Spoken word (recited) — full opacity with subtle gold tint */
 .mp-word--spoken {
   filter: blur(0) !important;
   opacity: 1 !important;
+  color: #6B5628;
+  transform: scale(1);
 }
 
-/* Current word (just reached) */
+/* Current word (the word being spoken right now) — warm gold glow pulse */
 .mp-word--current {
   color: #8C6A30;
-  text-shadow: 0 0 14px rgba(194, 160, 91, 0.45);
-  transform: scale(1.04);
+  text-shadow:
+    0 0 10px rgba(194, 160, 91, 0.5),
+    0 0 24px rgba(194, 160, 91, 0.25),
+    0 0 40px rgba(194, 160, 91, 0.1);
+  transform: scale(1.06);
+  animation: mp-current-glow 1.8s ease-in-out infinite;
 }
 
-/* Error word (misread) */
-.mp-word--error {
-  color: #D64545 !important;
+@keyframes mp-current-glow {
+  0%, 100% {
+    text-shadow:
+      0 0 10px rgba(194, 160, 91, 0.5),
+      0 0 24px rgba(194, 160, 91, 0.25),
+      0 0 40px rgba(194, 160, 91, 0.1);
+  }
+  50% {
+    text-shadow:
+      0 0 14px rgba(194, 160, 91, 0.65),
+      0 0 30px rgba(194, 160, 91, 0.35),
+      0 0 50px rgba(194, 160, 91, 0.15);
+  }
+}
+
+/* Verse marker (ayah number circle) when all words of the verse are spoken */
+.mp-word--verse-done {
+  color: #7a9a5a !important;
   filter: blur(0) !important;
   opacity: 1 !important;
-  text-shadow: 0 0 12px rgba(214, 69, 69, 0.4);
-  animation: mp-error-pulse 0.6s ease-in-out;
+  text-shadow: 0 0 10px rgba(122, 154, 90, 0.35);
+  transition: color 0.5s ease, text-shadow 0.5s ease;
 }
 
-@keyframes mp-error-pulse {
+/* Error word (misread) — subtle amber, non-distracting */
+.mp-word--error {
+  color: #C8882E !important;
+  filter: blur(0) !important;
+  opacity: 1 !important;
+  text-shadow: 0 0 8px rgba(200, 136, 46, 0.3);
+  text-decoration: underline wavy rgba(200, 136, 46, 0.45);
+  text-underline-offset: 3px;
+  animation: mp-error-nudge 0.4s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@keyframes mp-error-nudge {
   0% { transform: scale(1); }
-  25% { transform: scale(1.12); }
-  50% { transform: scale(0.95); }
-  75% { transform: scale(1.05); }
+  30% { transform: scale(1.06); }
   100% { transform: scale(1); }
 }
 
@@ -2708,8 +2743,27 @@ body {
     background: var(--bg);
   }
 
+  .mp-word--spoken {
+    color: #C2A05B;
+  }
+
   .mp-word--current {
     color: #D4B06A;
+    text-shadow:
+      0 0 10px rgba(212, 176, 106, 0.55),
+      0 0 24px rgba(212, 176, 106, 0.3),
+      0 0 40px rgba(212, 176, 106, 0.12);
+  }
+
+  .mp-word--verse-done {
+    color: #8cbf6a !important;
+    text-shadow: 0 0 10px rgba(140, 191, 106, 0.3);
+  }
+
+  .mp-word--error {
+    color: #D4A04A !important;
+    text-shadow: 0 0 8px rgba(212, 160, 74, 0.3);
+    text-decoration-color: rgba(212, 160, 74, 0.45);
   }
 
   .verse--active .word--current {
