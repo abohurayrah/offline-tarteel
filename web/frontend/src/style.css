@@ -48,7 +48,6 @@ body {
 /* ── App shell ── */
 #app {
   width: 100%;
-  max-width: var(--max-width);
   margin: 0 auto;
   height: 100vh;
   height: 100dvh;
@@ -61,6 +60,10 @@ body {
 /* ═══════════════════════════════════════════════════════════════════════════
    Loading Screen
    ═══════════════════════════════════════════════════════════════════════════ */
+
+#loading-status[hidden] {
+  display: none !important;
+}
 
 #loading-status {
   flex: 1;
@@ -167,6 +170,10 @@ body {
    Mushaf Container — full remaining height
    ═══════════════════════════════════════════════════════════════════════════ */
 
+#mushaf-container[hidden] {
+  display: none !important;
+}
+
 #mushaf-container {
   display: flex;
   flex-direction: column;
@@ -183,10 +190,11 @@ body {
   flex: 1;
   min-height: 0;
   width: 100%;
-  max-width: 560px;
+  max-width: 700px;
   margin: 0 auto;
   display: flex;
   align-items: stretch;
+  overflow-y: auto;
 }
 
 /* ── Mushaf page ── */
@@ -1126,6 +1134,10 @@ body {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .av-hidden { display: none !important; }
+
+#algorithm-view[hidden] {
+  display: none !important;
+}
 
 #algorithm-view {
   background: #141312;
