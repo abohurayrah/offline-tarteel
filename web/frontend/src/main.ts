@@ -1113,9 +1113,9 @@ function stopAudio(): void {
 // Init
 // ---------------------------------------------------------------------------
 document.addEventListener("DOMContentLoaded", () => {
-  // Create inference worker
+  // Create inference worker (FastConformer CTC with constrained decoding)
   const worker = new Worker(
-    new URL("./worker/inference.ts", import.meta.url),
+    new URL("./worker/inference-fastconformer.ts", import.meta.url),
     { type: "module" },
   );
   state.worker = worker;
