@@ -21,7 +21,6 @@ public/.cache/
 
 # ONNX model weights (large, downloaded separately)
 public/models/
-*.onnx
 
 # Test audio samples (large, not code)
 test/audio-samples/

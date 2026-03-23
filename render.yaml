@@ -4,8 +4,7 @@ services:
     runtime: node
     buildCommand: |
       cd web/frontend
-      npm ci
-      # Download FastConformer ONNX model if not present
+      npm ci --include=dev
       if [ ! -f public/fastconformer_ar_ctc_q8.onnx ]; then
         curl -L -o public/fastconformer_ar_ctc_q8.onnx \
           https://github.com/yazinsai/offline-tarteel/releases/download/v0.1.0/fastconformer_ar_ctc_q8.onnx
