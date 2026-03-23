@@ -3,9 +3,20 @@
 
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Tarteel</title>
-  <meta name="theme-color" content="#FAFAFA">
+  <meta name="theme-color" content="#C2A05B">
+  <meta name="description" content="On-device Quran verse recognition. Recite and see your verses highlighted in real time.">
+
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Tarteel">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
 
 <body>
@@ -50,12 +61,6 @@
           </svg>
           <svg class="rec-icon rec-icon--stop" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
             <rect x="4" y="4" width="16" height="16" rx="2"/>
-          </svg>
-        </button>
-        <button id="btn-narrowing" class="mc-btn" title="Live Narrowing">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
           </svg>
         </button>
       </div>
@@ -128,17 +133,6 @@
       </div>
     </dialog>
   </div>
-  <script>
-    // Unregister old service worker that cached stale assets
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.getRegistrations().then(function (regs) {
-        for (var r of regs) r.unregister();
-      });
-      caches.keys().then(function (keys) {
-        for (var k of keys) caches.delete(k);
-      });
-    }
-  </script>
   <script type="module" src="/src/main.ts"></script>
 </body>
 

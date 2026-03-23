@@ -86,7 +86,10 @@ const state = {
   lastDiagnosticSentAt: 0,
   recentVerseMatches: [] as { surah: number; ayah: number; timestamp: number }[],
   practiceMode: false,
-  narrowingMode: false,
+  /** Raw transcript text shown in the candidate status bar during listening */
+  lastRawTranscript: "" as string,
+  /** Timer for fading the candidate bar after a confirmed match */
+  candidateMatchFadeTimer: null as ReturnType<typeof setTimeout> | null,
   // Mushaf page mode
   mushafPages: null as MushafPageData[] | null,
   verseToPage: null as Record<string, number> | null,
@@ -112,7 +115,6 @@ const $btnRecToggle = document.getElementById("btn-rec-toggle")!;
 const $btnReport = document.getElementById("btn-report")!;
 const $btnRestart = document.getElementById("btn-restart")!;
 const $btnPractice = document.getElementById("btn-practice")!;
-const $btnNarrowing = document.getElementById("btn-narrowing")!;
 const $candidateList = document.getElementById("candidate-list")!;
 const $app = document.getElementById("app")!;
 // Mushaf page mode
@@ -902,26 +904,108 @@ function handleWordProgress(msg: WordProgressMessage): void {
 function handleRawTranscript(msg: RawTranscriptMessage): void {
   $rawTranscript.textContent = msg.text;
   $rawTranscript.classList.add("visible");
+
+  // Update last raw transcript for the candidate status bar
+  state.lastRawTranscript = msg.text;
+
+  // If no candidates are showing yet, render the "listening" state in the bar
+  if (!$candidateList.querySelector(".candidate-item")) {
+    renderCandidateListening(msg.text);
+  } else {
+    // Update the transcript line inside the existing candidate bar
+    const transcriptEl = $candidateList.querySelector(".cbar-transcript");
+    if (transcriptEl) {
+      transcriptEl.textContent = `"${msg.text}"`;
+    }
+  }
+}
+
+/** Render the "Listening..." state in the candidate status bar */
+function renderCandidateListening(text: string): void {
+  if (!state.isActive) return;
+  // Clear any pending match fade
+  if (state.candidateMatchFadeTimer) {
+    clearTimeout(state.candidateMatchFadeTimer);
+    state.candidateMatchFadeTimer = null;
+  }
+
+  $candidateList.innerHTML = "";
+  $candidateList.className = "cbar cbar--listening";
+
+  const row = document.createElement("div");
+  row.className = "cbar-listening-row";
+
+  const icon = document.createElement("span");
+  icon.className = "cbar-icon";
+  icon.textContent = "\uD83C\uDFA4"; // microphone emoji
+
+  const label = document.createElement("span");
+  label.className = "cbar-label";
+  label.textContent = "Listening...";
+
+  row.appendChild(icon);
+  row.appendChild(label);
+  $candidateList.appendChild(row);
+
+  if (text) {
+    const transcript = document.createElement("div");
+    transcript.className = "cbar-transcript";
+    transcript.dir = "rtl";
+    transcript.lang = "ar";
+    transcript.textContent = `"${text}"`;
+    $candidateList.appendChild(transcript);
+  }
+
+  $candidateList.classList.add("visible");
 }
 
 // ---------------------------------------------------------------------------
 // Live narrowing (candidate list)
 // ---------------------------------------------------------------------------
 function handleCandidateList(msg: CandidateListMessage): void {
-  if (!state.narrowingMode) return;
+  if (!state.isActive) return;
+
+  // Clear any pending match fade timer (we have new candidates)
+  if (state.candidateMatchFadeTimer) {
+    clearTimeout(state.candidateMatchFadeTimer);
+    state.candidateMatchFadeTimer = null;
+  }
 
   const container = $candidateList;
   container.innerHTML = "";
 
   if (msg.candidates.length === 0) {
-    container.classList.remove("visible");
+    // No candidates -- show listening state with last transcript
+    if (state.lastRawTranscript) {
+      renderCandidateListening(state.lastRawTranscript);
+    }
     return;
   }
 
-  // Show top score for reference
-  const topScore = msg.candidates[0].score;
+  // Narrowing state -- show top 3 candidates
+  container.className = "cbar cbar--narrowing";
 
-  for (const c of msg.candidates) {
+  const topScore = msg.candidates[0].score;
+  const shown = msg.candidates.slice(0, 3);
+
+  // Header row
+  const header = document.createElement("div");
+  header.className = "cbar-header";
+
+  const icon = document.createElement("span");
+  icon.className = "cbar-icon";
+  icon.textContent = "\uD83D\uDCD6"; // open book emoji
+
+  const label = document.createElement("span");
+  label.className = "cbar-label";
+  label.textContent = `${msg.candidates.length} candidate${msg.candidates.length !== 1 ? "s" : ""}`;
+
+  header.appendChild(icon);
+  header.appendChild(label);
+  container.appendChild(header);
+
+  // Candidate rows
+  for (const c of shown) {
     const item = document.createElement("div");
     item.className = "candidate-item";
 
@@ -933,38 +1017,127 @@ function handleCandidateList(msg: CandidateListMessage): void {
       item.classList.add("candidate--likely");
     }
 
-    const pct = Math.round(c.score * 100);
-    const bar = document.createElement("div");
-    bar.className = "candidate-bar";
-    bar.style.width = `${pct}%`;
-    item.appendChild(bar);
+    // Make tappable -- navigate to this verse
+    item.style.cursor = "pointer";
+    item.addEventListener("click", () => {
+      handleCandidateTap(c.surah, c.ayah, c.surah_name_en);
+    });
 
+    // Left side: label + score bar
     const info = document.createElement("div");
     info.className = "candidate-info";
 
-    const label = document.createElement("span");
-    label.className = "candidate-label";
-    label.textContent = `${c.surah_name_en} ${c.surah}:${c.ayah}`;
+    const labelEl = document.createElement("span");
+    labelEl.className = "candidate-label";
+    labelEl.textContent = `${c.surah_name_en} ${c.surah}:${c.ayah}`;
 
-    const score = document.createElement("span");
-    score.className = "candidate-score";
-    score.textContent = `${pct}%`;
+    const scoreEl = document.createElement("span");
+    scoreEl.className = "candidate-score";
+    const pct = Math.round(c.score * 100);
+    scoreEl.textContent = `${pct}%`;
 
-    info.appendChild(label);
-    info.appendChild(score);
+    info.appendChild(labelEl);
+    info.appendChild(scoreEl);
     item.appendChild(info);
 
-    const preview = document.createElement("div");
-    preview.className = "candidate-preview";
-    preview.dir = "rtl";
-    preview.lang = "ar";
-    preview.textContent = c.text_preview;
-    item.appendChild(preview);
+    // Progress bar
+    const barTrack = document.createElement("div");
+    barTrack.className = "candidate-bar-track";
+
+    const barFill = document.createElement("div");
+    barFill.className = "candidate-bar-fill";
+    barFill.style.width = `${pct}%`;
+    barTrack.appendChild(barFill);
+    item.appendChild(barTrack);
 
     container.appendChild(item);
   }
 
+  // Show transcript at bottom if available
+  const transcriptText = msg.transcript || state.lastRawTranscript;
+  if (transcriptText) {
+    const transcript = document.createElement("div");
+    transcript.className = "cbar-transcript";
+    transcript.dir = "rtl";
+    transcript.lang = "ar";
+    transcript.textContent = `"${transcriptText}"`;
+    container.appendChild(transcript);
+  }
+
   container.classList.add("visible");
+}
+
+/** Handle tapping a candidate -- navigate to that verse's page and enter tracking */
+async function handleCandidateTap(surah: number, ayah: number, surahNameEn: string): Promise<void> {
+  if (!state.mushafDataReady) return;
+
+  const targetPage = getPageForVerse(surah, ayah);
+  if (!targetPage) return;
+
+  console.log(`[CANDIDATE_TAP] User selected ${surahNameEn} ${surah}:${ayah} → page ${targetPage}`);
+
+  // Update tracking state as if this were a verse_match
+  state.lastModelPrediction = { surah, ayah, confidence: 1.0 };
+
+  // Navigate to the page
+  if (targetPage !== state.currentMushafPage) {
+    await navigateToMushafPage(targetPage);
+  }
+
+  // Clear candidate bar with matched state
+  renderCandidateMatched(surahNameEn, surah, ayah, "");
+
+  // Tell the worker to lock onto this verse
+  state.worker?.postMessage({ type: "hint_verse", surah, ayah });
+}
+
+/** Render the "Matched" confirmation state in the candidate bar */
+function renderCandidateMatched(surahNameEn: string, surah: number, ayah: number, textPreview: string): void {
+  // Clear any existing fade timer
+  if (state.candidateMatchFadeTimer) {
+    clearTimeout(state.candidateMatchFadeTimer);
+    state.candidateMatchFadeTimer = null;
+  }
+
+  $candidateList.innerHTML = "";
+  $candidateList.className = "cbar cbar--matched";
+
+  const row = document.createElement("div");
+  row.className = "cbar-matched-row";
+
+  const check = document.createElement("span");
+  check.className = "cbar-icon cbar-icon--check";
+  check.textContent = "\u2713"; // checkmark
+
+  const label = document.createElement("span");
+  label.className = "cbar-label";
+  label.textContent = `${surahNameEn} ${surah}:${ayah}`;
+
+  row.appendChild(check);
+  row.appendChild(label);
+
+  if (textPreview) {
+    const preview = document.createElement("span");
+    preview.className = "cbar-matched-preview";
+    preview.dir = "rtl";
+    preview.lang = "ar";
+    // Truncate long previews
+    preview.textContent = textPreview.length > 40 ? textPreview.slice(0, 40) + "\u2026" : textPreview;
+    row.appendChild(preview);
+  }
+
+  $candidateList.appendChild(row);
+  $candidateList.classList.add("visible");
+
+  // Fade out after 2 seconds
+  state.candidateMatchFadeTimer = setTimeout(() => {
+    $candidateList.classList.add("cbar--fading");
+    setTimeout(() => {
+      $candidateList.classList.remove("visible", "cbar--fading");
+      $candidateList.innerHTML = "";
+      $candidateList.className = "";
+    }, 400);
+  }, 2000);
 }
 
 // ---------------------------------------------------------------------------
@@ -1083,9 +1256,13 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
       navigateToMushafPage(1);
     }
   } else if (msg.type === "verse_match") {
-    // Hide candidates once a verse is confirmed
-    $candidateList.innerHTML = "";
-    $candidateList.classList.remove("visible");
+    // Show confirmed match in candidate bar (fades after 2s)
+    renderCandidateMatched(
+      msg.surah_name,
+      msg.surah,
+      msg.ayah,
+      msg.verse_text,
+    );
     pushDiagnosticEvent("verse_match", {
       surah: msg.surah, ayah: msg.ayah, confidence: msg.confidence,
     });
@@ -1322,16 +1499,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Narrowing mode toggle
-  $btnNarrowing.addEventListener("click", () => {
-    state.narrowingMode = !state.narrowingMode;
-    $btnNarrowing.classList.toggle("active", state.narrowingMode);
-    if (!state.narrowingMode) {
-      $candidateList.innerHTML = "";
-      $candidateList.classList.remove("visible");
-    }
-  });
-
   // Record toggle (single button: mic ↔ stop)
   $btnRecToggle.addEventListener("click", async () => {
     if (!state.modelReady) return; // Ignore clicks before model is loaded
@@ -1356,6 +1523,7 @@ document.addEventListener("DOMContentLoaded", () => {
       $rawTranscript.textContent = "";
       $rawTranscript.classList.remove("visible");
       $postRecording.hidden = true;
+      state.lastRawTranscript = "";
 
       if (state.mushafDataReady) {
         $mushafContainer.hidden = false;
@@ -1375,6 +1543,8 @@ document.addEventListener("DOMContentLoaded", () => {
         $btnRecToggle.classList.remove("mc-btn--rec");
         $btnRecToggle.classList.add("mc-btn--stop", "recording");
         $btnRecToggle.title = "Stop";
+        // Show initial listening state in the candidate bar
+        renderCandidateListening("");
       } catch {
         // startAudio already set the permission prompt;
         // revert button to mic state so user can retry
@@ -1390,7 +1560,13 @@ document.addEventListener("DOMContentLoaded", () => {
       $btnRecToggle.title = "Start recitation";
 
       // Keep practice mode and mushaf visible so user sees their progress
+      // Clear candidate bar and any pending fade timers
+      if (state.candidateMatchFadeTimer) {
+        clearTimeout(state.candidateMatchFadeTimer);
+        state.candidateMatchFadeTimer = null;
+      }
       $candidateList.innerHTML = "";
+      $candidateList.className = "";
       $candidateList.classList.remove("visible");
     }
   });
@@ -1416,10 +1592,15 @@ document.addEventListener("DOMContentLoaded", () => {
     $rawTranscript.classList.remove("visible");
     $postRecording.hidden = true;
     state.practiceMode = false;
-    state.narrowingMode = false;
+    state.lastRawTranscript = "";
     $app.classList.remove("practice-mode");
-    $btnNarrowing.classList.remove("active");
+    // Clear candidate bar and any pending fade timers
+    if (state.candidateMatchFadeTimer) {
+      clearTimeout(state.candidateMatchFadeTimer);
+      state.candidateMatchFadeTimer = null;
+    }
     $candidateList.innerHTML = "";
+    $candidateList.className = "";
     $candidateList.classList.remove("visible");
 
     // Reset toggle button to mic state
