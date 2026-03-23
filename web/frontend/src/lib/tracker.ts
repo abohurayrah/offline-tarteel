@@ -463,11 +463,10 @@ export class RecitationTracker {
   private async _handleDiscovery(): Promise<WorkerOutbound[]> {
     const messages: WorkerOutbound[] = [];
 
-    // Adaptive trigger: first attempt after 5.0s to capture a full verse,
-    // then standard 3s for subsequent cycles.
-    // FastConformer needs substantial audio context for good transcription.
+    // Adaptive trigger: first attempt after 3.0s, same as standard.
+    // FastConformer needs ~3s of audio for a useful transcript.
     const triggerThreshold = !this.hasEverMatched && this.cyclesSinceEmit === Infinity
-      ? Math.floor(SAMPLE_RATE * 5.0)
+      ? Math.floor(SAMPLE_RATE * 3.0)
       : TRIGGER_SAMPLES;
     if (this.newAudioCount < triggerThreshold) return messages;
     this.newAudioCount = 0;
@@ -633,12 +632,10 @@ export class RecitationTracker {
       }
     }
 
-    // If transcript covers less than 30% of the verse's words, don't lock in yet.
-    // Even high scores on tiny fragments are unreliable — a 2-word fragment of a
-    // 19-word verse can score 0.95 via substring matching but be completely wrong.
-    // Wait for more audio to accumulate.
-    if (match && match.text_words && match.text_words.length > 6 &&
-        matchWords.length < match.text_words.length * 0.3) {
+    // Fragment coverage gate: only block extremely short fragments (1-2 words)
+    // of very long verses (15+ words) with low scores.
+    if (match && match.text_words && match.text_words.length > 15 &&
+        matchWords.length <= 2 && match.score < 0.95) {
       messages.push({ type: "raw_transcript", text, confidence: Math.round(match.score * 100) / 100 });
       return messages;
     }

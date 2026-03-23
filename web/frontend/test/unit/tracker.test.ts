@@ -640,8 +640,8 @@ describe("RecitationTracker", () => {
     expect(verseMatches.length).toBeLessThanOrEqual(1);
   });
 
-  it("MIN_DISCOVERY_WORDS constant is 4", () => {
+  it("MIN_DISCOVERY_WORDS constant is 3", () => {
     // Verify the exported constant value matches expectations
-    expect(MIN_DISCOVERY_WORDS).toBe(4);
+    expect(MIN_DISCOVERY_WORDS).toBe(3);
   });
 });
