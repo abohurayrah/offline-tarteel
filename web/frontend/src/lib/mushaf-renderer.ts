@@ -195,23 +195,19 @@ export function highlightWord(
     w.classList.remove("mp-word--current");
   }
 
-  // Build contiguous max from matched indices.
-  // Also count error-marked words as "filled" so that errors don't break the chain.
+  // Highlight all matched words AND everything before the highest matched index.
+  // This handles mid-verse starts: if the user reads from word 4, words 0-3 are
+  // assumed already read (the verse was detected because of them) and words 4+
+  // highlight progressively as word_progress confirms each one.
   const matched = new Set(matchedIndices);
-  let contiguousMax = -1;
-  for (let i = 0; i < words.length; i++) {
-    if (matched.has(i) || words[i].classList.contains("mp-word--error")) {
-      contiguousMax = i;
-    } else {
-      break;
-    }
-  }
+  const highestMatched = matchedIndices.length > 0 ? Math.max(...matchedIndices) : -1;
 
   for (let i = 0; i < words.length; i++) {
-    if (i <= contiguousMax) {
+    if (i <= highestMatched) {
+      // Everything up to and including the highest matched word is "spoken"
       words[i].classList.add("mp-word--spoken");
       words[i].classList.remove("mp-word--hidden");
-      if (i === contiguousMax && matched.has(i)) {
+      if (i === highestMatched && matched.has(i)) {
         words[i].classList.add("mp-word--current");
       }
     }

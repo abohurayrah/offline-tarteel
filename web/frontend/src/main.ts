@@ -409,16 +409,17 @@ function handleMushafWordProgress(msg: WordProgressMessage): void {
     }
   }
 
-  // Compute contiguous max from 0 in mushaf-space. Error words count as "filled"
-  // so they don't break the contiguous chain (the user can still progress past them).
-  const mushafTotalWords = _mushafTrackingTotal;
+  // Use highest matched word index as the progress marker.
+  // Everything up to the highest matched word is revealed (including gaps).
+  // This handles mid-verse starts: if user reads from word 4, words 0-3 are
+  // assumed already read and words 4+ highlight progressively.
   let contiguousMax = -1;
-  for (let i = 0; i < mushafTotalWords; i++) {
-    if (_mushafMatchedWords.has(i) || _mushafErrorWords.has(i)) {
-      contiguousMax = i;
-    } else {
-      break;
-    }
+  for (const idx of _mushafMatchedWords) {
+    if (idx > contiguousMax) contiguousMax = idx;
+  }
+  // Error words also count
+  for (const idx of _mushafErrorWords) {
+    if (idx > contiguousMax) contiguousMax = idx;
   }
 
   // Detect skipped words (gaps) — these are likely misreads
