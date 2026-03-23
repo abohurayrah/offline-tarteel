@@ -453,10 +453,10 @@ export class RecitationTracker {
   private async _handleDiscovery(): Promise<WorkerOutbound[]> {
     const messages: WorkerOutbound[] = [];
 
-    // Adaptive trigger: first attempt after 1.2s, then standard 2s
+    // Adaptive trigger: first attempt after 2.0s, then standard 3s
     // This reduces time-to-first-match without sacrificing accuracy on retries
     const triggerThreshold = !this.hasEverMatched && this.cyclesSinceEmit === Infinity
-      ? Math.floor(SAMPLE_RATE * 1.2)
+      ? Math.floor(SAMPLE_RATE * 2.0)
       : TRIGGER_SAMPLES;
     if (this.newAudioCount < triggerThreshold) return messages;
     this.newAudioCount = 0;
@@ -618,6 +618,16 @@ export class RecitationTracker {
           text,
           confidence: Math.round(match.score * 100) / 100,
         });
+        return messages;
+      }
+    }
+
+    // If transcript covers less than 30% of the verse's words, require higher confidence
+    if (match && match.text_words && matchWords.length < match.text_words.length * 0.3) {
+      const fragmentThreshold = 0.90;
+      if (match.score < fragmentThreshold) {
+        // Not confident enough — wait for more audio
+        messages.push({ type: "raw_transcript", text, confidence: Math.round(match.score * 100) / 100 });
         return messages;
       }
     }

@@ -147,7 +147,7 @@ export interface QuranVerse {
 // Constants (matching server.py exactly)
 // ---------------------------------------------------------------------------
 export const SAMPLE_RATE = 16000;
-export const TRIGGER_SAMPLES = SAMPLE_RATE * 2.0;
+export const TRIGGER_SAMPLES = SAMPLE_RATE * 3.0;
 export const MAX_WINDOW_SAMPLES = SAMPLE_RATE * 10.0;
 export const SILENCE_RMS_THRESHOLD = 0.005;
 
@@ -156,9 +156,9 @@ export const FIRST_MATCH_THRESHOLD = 0.75;
 export const RAW_TRANSCRIPT_THRESHOLD = 0.25;
 export const SURROUNDING_CONTEXT = 2;
 
-export const TRACKING_TRIGGER_SAMPLES = SAMPLE_RATE * 0.5;
+export const TRACKING_TRIGGER_SAMPLES = SAMPLE_RATE * 1.0;
 export const TRACKING_SILENCE_SAMPLES = SAMPLE_RATE * 2.0;
-export const TRACKING_MAX_WINDOW_SAMPLES = SAMPLE_RATE * 5.0;
+export const TRACKING_MAX_WINDOW_SAMPLES = SAMPLE_RATE * 8.0;
 export const STALE_CYCLE_LIMIT = 4;
 export const LOOKAHEAD = 5;
 
