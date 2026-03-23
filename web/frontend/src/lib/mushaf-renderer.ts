@@ -182,12 +182,8 @@ export function highlightWord(
   ayah: number,
   matchedIndices: number[],
 ): void {
-  // Clear previous current highlights
-  for (const w of container.querySelectorAll<HTMLElement>(".mp-word--current")) {
-    w.classList.remove("mp-word--current");
-  }
-
-  // Get all words for this verse, in DOM order
+  // Only clear "current" markers for THIS verse's words, not all words on the page.
+  // Clearing globally caused flickering when multiple verses had highlighted words.
   const words = Array.from(
     container.querySelectorAll<HTMLElement>(
       `.mp-word[data-surah="${surah}"][data-ayah="${ayah}"]`,
@@ -195,19 +191,27 @@ export function highlightWord(
   );
   if (!words.length) return;
 
-  // Build contiguous max from matched indices
+  for (const w of words) {
+    w.classList.remove("mp-word--current");
+  }
+
+  // Build contiguous max from matched indices.
+  // Also count error-marked words as "filled" so that errors don't break the chain.
   const matched = new Set(matchedIndices);
   let contiguousMax = -1;
   for (let i = 0; i < words.length; i++) {
-    if (matched.has(i)) contiguousMax = i;
-    else break;
+    if (matched.has(i) || words[i].classList.contains("mp-word--error")) {
+      contiguousMax = i;
+    } else {
+      break;
+    }
   }
 
   for (let i = 0; i < words.length; i++) {
     if (i <= contiguousMax) {
       words[i].classList.add("mp-word--spoken");
       words[i].classList.remove("mp-word--hidden");
-      if (i === contiguousMax) {
+      if (i === contiguousMax && matched.has(i)) {
         words[i].classList.add("mp-word--current");
       }
     }
@@ -262,7 +266,8 @@ export function hideUnrevealed(
     const key = `${s}:${a}`;
     if (
       !revealedVerses.has(key) &&
-      !w.classList.contains("mp-word--spoken")
+      !w.classList.contains("mp-word--spoken") &&
+      !w.classList.contains("mp-word--revealed")
     ) {
       w.classList.add("mp-word--hidden");
     }

@@ -1564,6 +1564,16 @@ body {
   .mp-line--text {
     padding: 0 0.2rem;
   }
+
+  /* Sticky controls on mobile so the record button is always reachable */
+  .mushaf-controls {
+    position: sticky;
+    bottom: 0;
+    z-index: 15;
+    background: var(--bg);
+    padding: 0.5rem 0;
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.04);
+  }
 }
 
 @media (max-width: 380px) {

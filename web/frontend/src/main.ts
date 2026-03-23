@@ -139,6 +139,7 @@ function toArabicNum(n: number): string {
 async function loadQuranData(): Promise<void> {
   if (state.quranData) return;
   const res = await fetch("/quran.json");
+  if (!res.ok) throw new Error(`Failed to load Quran data (HTTP ${res.status})`);
   state.quranData = await res.json();
   initSurahDropdown(state.quranData!);
 }
@@ -173,6 +174,8 @@ async function loadMushafData(): Promise<void> {
     fetch("/mushaf-pages.json"),
     fetch("/verse-to-page.json"),
   ]);
+  if (!pagesRes.ok) throw new Error(`Failed to load mushaf pages (HTTP ${pagesRes.status})`);
+  if (!vtpRes.ok) throw new Error(`Failed to load verse-to-page map (HTTP ${vtpRes.status})`);
   state.mushafPages = await pagesRes.json();
   state.verseToPage = await vtpRes.json();
   state.mushafDataReady = true;
@@ -198,6 +201,19 @@ async function navigateToMushafPage(pageNum: number): Promise<void> {
 
   const page = state.mushafPages[pageNum - 1];
   await renderMushafPage($mushafPage, page, state.revealedVerses, state.practiceMode);
+
+  // After re-rendering, restore word highlights for the currently-tracked verse
+  // if it's on this page. The DOM was recreated by renderPage, so mp-word--spoken
+  // classes were lost. Re-apply them from the monotonic accumulator.
+  if (_mushafTrackingKey && _mushafMatchedWords.size > 0) {
+    const [ts, ta] = _mushafTrackingKey.split(":");
+    const trackingPage = getPageForVerse(parseInt(ts), parseInt(ta));
+    if (trackingPage === pageNum) {
+      const accumulated = Array.from(_mushafMatchedWords).sort((a, b) => a - b);
+      mushafHighlightWord($mushafPage, parseInt(ts), parseInt(ta), accumulated);
+    }
+  }
+
   $mushafPage.classList.remove("mushaf-page--exit");
   $mushafPage.classList.add("mushaf-page--enter");
   setTimeout(() => $mushafPage.classList.remove("mushaf-page--enter"), 350);
@@ -217,7 +233,19 @@ async function handleMushafVerseMatch(msg: VerseMatchMessage): Promise<void> {
   _mushafErrorWords.clear();
   _mushafErrorKey = "";
 
-  // Track verse transition time — suppress gap detection for 2s after transitions
+  // Clear word progress accumulator from previous verse to prevent stale highlights
+  // from the old verse flashing during the transition to the new verse.
+  // The accumulator will be re-populated by handleMushafWordProgress for the new verse.
+  const newKey = `${msg.surah}:${msg.ayah}`;
+  if (newKey !== _mushafTrackingKey) {
+    _mushafMatchedWords = new Set<number>();
+    _mushafTrackingKey = newKey;
+    _mushafBismillahOffset = _computeBismillahOffset(msg.surah, msg.ayah);
+    _mushafTrackingTotal = 0; // will be set by first word_progress
+  }
+
+  // Track verse transition time — suppress gap detection for 3s after transitions
+  // (increased from 2s to cover the grace cycle gap in tracker.ts)
   state.lastVerseTransitionTime = Date.now();
 
   console.log(
@@ -290,11 +318,37 @@ async function handleMushafVerseMatch(msg: VerseMatchMessage): Promise<void> {
 }
 
 // Mushaf word progress accumulator (same pattern as flowing mode)
+// IMPORTANT: This set is monotonic — indices are only ever added, never removed,
+// for the lifetime of a single verse. It is only cleared on verse transition.
+// NOTE: indices stored here are MUSHAF-space (0-indexed into the DOM words for
+// the verse, with bismillah offset already subtracted for ayah 1 verses).
 let _mushafMatchedWords = new Set<number>();
 let _mushafTrackingKey = "";
-// Track error words — blocks progression past them
+// Total word count for the current tracking verse in MUSHAF-space
+let _mushafTrackingTotal = 0;
+// Bismillah word offset: for ayah 1 of surahs with separate basmala, the tracker
+// sends indices into text_words which includes bismillah, but the mushaf DOM does
+// not include those words (they are on a separate basmala line). This offset is
+// subtracted from tracker indices to align them with the mushaf DOM.
+let _mushafBismillahOffset = 0;
+// Track error words — blocks progression past them (indices in MUSHAF-space)
 let _mushafErrorWords = new Set<number>();
 let _mushafErrorKey = "";
+
+// Compute the bismillah offset for a given verse. For ayah 1 of surahs
+// with a separate basmala line in the mushaf, the tracker's text_words includes
+// the 4 bismillah words, but the mushaf DOM has them on a separate line.
+// Returns the number of words to skip (0 or 4).
+function _computeBismillahOffset(surah: number, ayah: number): number {
+  if (ayah !== 1 || surah === 1 || surah === 9) return 0;
+  // Check if this page has a basmala line for this surah
+  if (!state.mushafPages) return 0;
+  const targetPage = getPageForVerse(surah, ayah);
+  if (!targetPage) return 0;
+  const pageData = state.mushafPages[targetPage - 1];
+  const hasBasmala = pageData.lines.some((l) => l.type === "basmala");
+  return hasBasmala ? 4 : 0;
+}
 
 // Handle word progress in mushaf mode — reveal words one at a time
 function handleMushafWordProgress(msg: WordProgressMessage): void {
@@ -311,14 +365,26 @@ function handleMushafWordProgress(msg: WordProgressMessage): void {
     return;
   }
 
-  // Accumulate matched indices across events for the same verse
+  // Accumulate matched indices across events for the same verse.
+  // The accumulator is MONOTONIC: indices are only added, never removed.
+  // It is cleared on verse transition (in handleMushafVerseMatch or here on key change).
   const key = `${msg.surah}:${msg.ayah}`;
   if (key !== _mushafTrackingKey) {
     _mushafMatchedWords = new Set<number>();
     _mushafTrackingKey = key;
+    // Compute bismillah offset: tracker indices include bismillah words for ayah 1,
+    // but mushaf DOM has them on a separate basmala line.
+    _mushafBismillahOffset = _computeBismillahOffset(msg.surah, msg.ayah);
+    _mushafTrackingTotal = msg.total_words - _mushafBismillahOffset;
   }
+  // Monotonic add: only add new indices, never recreate the set.
+  // Apply bismillah offset to convert tracker-space indices to mushaf-space indices.
+  // Skip any indices that fall within the bismillah range (they map to the basmala line).
   for (const idx of msg.matched_indices) {
-    _mushafMatchedWords.add(idx);
+    const mushafIdx = idx - _mushafBismillahOffset;
+    if (mushafIdx >= 0) {
+      _mushafMatchedWords.add(mushafIdx);
+    }
   }
 
   // Track that this verse had actual word progress (used by verse_match to decide reveals)
@@ -327,29 +393,38 @@ function handleMushafWordProgress(msg: WordProgressMessage): void {
 
   // Clear errors for this verse when new word progress comes in (user retrying)
   if (_mushafErrorKey === key && _mushafErrorWords.size > 0) {
-    // Only clear errors for words that are now matched
+    // Only clear errors for words that are now matched (in mushaf-space)
     for (const idx of msg.matched_indices) {
-      _mushafErrorWords.delete(idx);
+      const mushafIdx = idx - _mushafBismillahOffset;
+      if (mushafIdx >= 0) {
+        _mushafErrorWords.delete(mushafIdx);
+      }
     }
     if (_mushafErrorWords.size === 0) {
       mushafClearErrors($mushafPage);
     }
   }
 
-  // Compute contiguous from 0, stopping at error words
+  // Compute contiguous max from 0 in mushaf-space. Error words count as "filled"
+  // so they don't break the contiguous chain (the user can still progress past them).
+  const mushafTotalWords = _mushafTrackingTotal;
   let contiguousMax = -1;
-  for (let i = 0; i < msg.total_words; i++) {
-    if (_mushafErrorWords.has(i)) break; // Block at error word
-    if (_mushafMatchedWords.has(i)) contiguousMax = i;
-    else break;
+  for (let i = 0; i < mushafTotalWords; i++) {
+    if (_mushafMatchedWords.has(i) || _mushafErrorWords.has(i)) {
+      contiguousMax = i;
+    } else {
+      break;
+    }
   }
 
   // Detect skipped words (gaps) — these are likely misreads
   // e.g., accumulated=[0,1,2,5,6] with contiguousMax=2 → words 3,4 were skipped
-  // Suppress during verse transitions (2s grace) to avoid false positives from stale audio
+  // Suppress during verse transitions (3s grace) to avoid false positives from stale audio.
+  // Also require contiguousMax >= 2 (at least 3 words matched contiguously) to avoid
+  // false positives at the very start of a verse where alignment is still settling.
   const beyondContiguous = accumulated.filter((i) => i > contiguousMax + 1);
-  const isRecentTransition = Date.now() - state.lastVerseTransitionTime < 2000;
-  if (beyondContiguous.length >= 2 && contiguousMax >= 1 && !isRecentTransition) {
+  const isRecentTransition = Date.now() - state.lastVerseTransitionTime < 3000;
+  if (beyondContiguous.length >= 2 && contiguousMax >= 2 && !isRecentTransition) {
     const firstBeyond = beyondContiguous[0];
     const skippedIndices: number[] = [];
     for (let i = contiguousMax + 1; i < firstBeyond; i++) {
@@ -386,15 +461,19 @@ function handleMushafWordProgress(msg: WordProgressMessage): void {
     }
   }
 
-  // Build spoken text so far (contiguous words from 0)
+  // Build spoken text so far (contiguous words from 0, skip error words)
   const spokenWords: string[] = [];
   for (let i = 0; i <= contiguousMax; i++) {
-    spokenWords.push(verseWordMap[i] || `[${i}]`);
+    if (!_mushafErrorWords.has(i)) {
+      spokenWords.push(verseWordMap[i] || `[${i}]`);
+    }
   }
 
-  const currentWord = verseWordMap[msg.word_index] || "";
+  const mushafWordIdx = msg.word_index - _mushafBismillahOffset;
+  const currentWord = verseWordMap[mushafWordIdx >= 0 ? mushafWordIdx : msg.word_index] || "";
   console.log(
     `[WORD] ${msg.surah}:${msg.ayah} word ${msg.word_index}/${msg.total_words}` +
+    (_mushafBismillahOffset > 0 ? ` (mushaf ${mushafWordIdx}/${mushafTotalWords}, bsmOffset=${_mushafBismillahOffset})` : "") +
     (currentWord ? ` "${currentWord}"` : "") +
     ` new=[${msg.matched_indices.join(",")}] accumulated=[${accumulated.join(",")}] contiguous=0..${contiguousMax}` +
     (_mushafErrorWords.size > 0 ? ` errors=[${Array.from(_mushafErrorWords).join(",")}]` : ""),
@@ -406,14 +485,14 @@ function handleMushafWordProgress(msg: WordProgressMessage): void {
     );
   }
 
-  // Highlight using accumulated indices (not just this event's)
+  // Highlight using accumulated mushaf-space indices (not just this event's)
   mushafHighlightWord($mushafPage, msg.surah, msg.ayah, accumulated);
 
-  // Mark verse as revealed only when ALL words are matched
-  if (_mushafMatchedWords.size >= msg.total_words) {
+  // Mark verse as revealed only when ALL mushaf words are matched
+  if (mushafTotalWords > 0 && _mushafMatchedWords.size >= mushafTotalWords) {
     state.revealedVerses.add(key);
     console.log(
-      `%c[VERSE_COMPLETE] ${msg.surah}:${msg.ayah} — all ${msg.total_words} words matched`,
+      `%c[VERSE_COMPLETE] ${msg.surah}:${msg.ayah} — all ${mushafTotalWords} mushaf words matched`,
       "color: #7a9a5a; font-weight: bold",
     );
   }
@@ -426,6 +505,7 @@ function handleMushafWordProgress(msg: WordProgressMessage): void {
 // Track FA state for mushaf word highlighting
 let _faTrackingKey = "";
 let _faConfirmedWords = new Set<number>();
+let _faBismillahOffset = 0;
 
 function handleMushafWordAligned(msg: WordAlignedMessage): void {
   const targetPage = getPageForVerse(msg.surah, msg.ayah);
@@ -435,11 +515,15 @@ function handleMushafWordAligned(msg: WordAlignedMessage): void {
   if (key !== _faTrackingKey) {
     _faConfirmedWords = new Set<number>();
     _faTrackingKey = key;
+    _faBismillahOffset = _computeBismillahOffset(msg.surah, msg.ayah);
   }
 
-  // Add confirmed words
+  // Add confirmed words (apply bismillah offset to convert to mushaf-space)
   for (const idx of msg.cumulative_indices) {
-    _faConfirmedWords.add(idx);
+    const mushafIdx = idx - _faBismillahOffset;
+    if (mushafIdx >= 0) {
+      _faConfirmedWords.add(mushafIdx);
+    }
   }
 
   // Track that this verse had progress
@@ -449,6 +533,9 @@ function handleMushafWordAligned(msg: WordAlignedMessage): void {
   const allMushafWords = $mushafPage.querySelectorAll<HTMLElement>(
     `.mp-word[data-surah="${msg.surah}"][data-ayah="${msg.ayah}"]`,
   );
+
+  // The msg.word_index is in tracker-space; convert to mushaf-space
+  const mushafWordIdx = msg.word_index - _faBismillahOffset;
 
   // Highlight all confirmed words up to current position
   for (let i = 0; i < allMushafWords.length; i++) {
@@ -461,7 +548,7 @@ function handleMushafWordAligned(msg: WordAlignedMessage): void {
       w.classList.remove("mp-word--fa-good", "mp-word--fa-warn", "mp-word--fa-error");
 
       // Apply confidence-based color only for the current word
-      if (i === msg.word_index) {
+      if (i === mushafWordIdx) {
         w.classList.add("mp-word--current");
         if (msg.confidence >= FA_CONFIDENCE_GOOD) {
           w.classList.add("mp-word--fa-good");
@@ -484,7 +571,7 @@ function handleMushafWordAligned(msg: WordAlignedMessage): void {
       if (line.type === "text" && line.words) {
         for (const w of line.words) {
           const [s, a, widx] = w.location.split(":");
-          if (s === String(msg.surah) && a === String(msg.ayah) && parseInt(widx) - 1 === msg.word_index) {
+          if (s === String(msg.surah) && a === String(msg.ayah) && parseInt(widx) - 1 === mushafWordIdx) {
             wordText = w.word;
           }
         }
@@ -531,6 +618,7 @@ async function handleMushafVerseComplete(msg: VerseCompleteMessage): Promise<voi
   // Reset FA tracking for next verse
   _faConfirmedWords = new Set<number>();
   _faTrackingKey = `${msg.next_surah}:${msg.next_ayah}`;
+  _faBismillahOffset = _computeBismillahOffset(msg.next_surah, msg.next_ayah);
 }
 
 // ---------------------------------------------------------------------------
@@ -955,9 +1043,23 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
   } else if (msg.type === "loading_status") {
     $loadingDetail.textContent = msg.message;
   } else if (msg.type === "error") {
-    $loadingDetail.textContent = `Error: ${msg.message}`;
     $modelStatus.textContent = "Error";
     console.error("Worker reported error:", msg.message);
+    // Show actionable error with retry on the loading screen
+    $loadingProgress.style.width = "0%";
+    $loadingDetail.innerHTML = "";
+    const errText = document.createElement("span");
+    errText.textContent = `Failed to load: ${msg.message}. `;
+    const retryBtn = document.createElement("button");
+    retryBtn.textContent = "Retry";
+    retryBtn.style.cssText = "cursor:pointer;text-decoration:underline;background:none;border:none;color:inherit;font:inherit;padding:0;";
+    retryBtn.addEventListener("click", () => {
+      $loadingDetail.textContent = "Retrying...";
+      $loadingProgress.style.width = "0%";
+      state.worker?.postMessage({ type: "init" });
+    });
+    $loadingDetail.appendChild(errText);
+    $loadingDetail.appendChild(retryBtn);
   } else if (msg.type === "ready") {
     $modelStatus.textContent = "Model ready";
     $modelStatus.classList.add("ready");
@@ -1028,69 +1130,96 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
 // ---------------------------------------------------------------------------
 // Audio capture
 // ---------------------------------------------------------------------------
+
+// Cap session audio to ~60 seconds (16kHz * 60s = 960000 samples).
+// Each chunk is 4800 samples (300ms). 60s = 200 chunks.
+const MAX_SESSION_CHUNKS = 200;
+
 async function startAudio(): Promise<void> {
+  let stream: MediaStream;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
+    stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
         echoCancellation: true,
         noiseSuppression: true,
       },
     });
-    state.stream = stream;
-    $permissionPrompt.hidden = true;
-
-    const audioCtx = new AudioContext();
-    state.audioCtx = audioCtx;
-
-    await audioCtx.audioWorklet.addModule("/audio-processor.js");
-    const source = audioCtx.createMediaStreamSource(stream);
-    const processor = new AudioWorkletNode(audioCtx, "audio-stream-processor");
-
-    processor.port.onmessage = (e: MessageEvent) => {
-      const samples = new Float32Array(e.data as ArrayBuffer);
-      // Save copy to session buffer
-      state.sessionAudioChunks.push(samples.slice());
-      // Send to worker for recognition
-      if (state.worker) {
-        state.worker.postMessage(
-          { type: "audio", samples },
-          [samples.buffer],
-        );
-      }
-    };
-
-    const analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 256;
-    source.connect(analyser);
-    source.connect(processor);
-
-    const levelBuf = new Float32Array(analyser.fftSize);
-    const checkLevel = () => {
-      if (!state.isActive) return;
-      analyser.getFloatTimeDomainData(levelBuf);
-      let sum = 0;
-      for (let i = 0; i < levelBuf.length; i++) {
-        sum += levelBuf[i] * levelBuf[i];
-      }
-      const rms = Math.sqrt(sum / levelBuf.length);
-      if (rms > 0.01) {
-        $indicator.classList.add("audio-detected");
-        $indicator.classList.remove("silence");
-      } else {
-        $indicator.classList.remove("audio-detected");
-        $indicator.classList.add("silence");
-      }
-      requestAnimationFrame(checkLevel);
-    };
-    checkLevel();
-
-    state.isActive = true;
-    $indicator.classList.add("active");
   } catch (err) {
-    console.error("Failed to start audio:", err);
+    console.error("Microphone access denied or failed:", err);
+    const isDenied =
+      err instanceof DOMException &&
+      (err.name === "NotAllowedError" || err.name === "PermissionDeniedError");
+    if (isDenied) {
+      $permissionPrompt.textContent =
+        "Microphone access was denied. Please allow microphone access in your browser settings, then try again.";
+    } else {
+      $permissionPrompt.textContent =
+        "Could not access the microphone. Please check that your device has a working microphone.";
+    }
     $permissionPrompt.hidden = false;
+    // Signal failure to the caller so it can revert button state
+    throw err;
   }
+
+  state.stream = stream;
+  $permissionPrompt.hidden = true;
+
+  const audioCtx = new AudioContext();
+  state.audioCtx = audioCtx;
+
+  // Resume AudioContext if suspended (browser autoplay policy on mobile)
+  if (audioCtx.state === "suspended") {
+    await audioCtx.resume();
+  }
+
+  await audioCtx.audioWorklet.addModule("/audio-processor.js");
+  const source = audioCtx.createMediaStreamSource(stream);
+  const processor = new AudioWorkletNode(audioCtx, "audio-stream-processor");
+
+  processor.port.onmessage = (e: MessageEvent) => {
+    const samples = new Float32Array(e.data as ArrayBuffer);
+    // Save copy to session buffer (capped to prevent unbounded memory growth)
+    state.sessionAudioChunks.push(samples.slice());
+    if (state.sessionAudioChunks.length > MAX_SESSION_CHUNKS) {
+      state.sessionAudioChunks.shift();
+    }
+    // Send to worker for recognition
+    if (state.worker) {
+      state.worker.postMessage(
+        { type: "audio", samples },
+        [samples.buffer],
+      );
+    }
+  };
+
+  const analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 256;
+  source.connect(analyser);
+  source.connect(processor);
+
+  const levelBuf = new Float32Array(analyser.fftSize);
+  const checkLevel = () => {
+    if (!state.isActive) return;
+    analyser.getFloatTimeDomainData(levelBuf);
+    let sum = 0;
+    for (let i = 0; i < levelBuf.length; i++) {
+      sum += levelBuf[i] * levelBuf[i];
+    }
+    const rms = Math.sqrt(sum / levelBuf.length);
+    if (rms > 0.01) {
+      $indicator.classList.add("audio-detected");
+      $indicator.classList.remove("silence");
+    } else {
+      $indicator.classList.remove("audio-detected");
+      $indicator.classList.add("silence");
+    }
+    requestAnimationFrame(checkLevel);
+  };
+  checkLevel();
+
+  state.isActive = true;
+  $indicator.classList.add("active");
 }
 
 // ---------------------------------------------------------------------------
@@ -1102,7 +1231,7 @@ function stopAudio(): void {
     state.stream = null;
   }
   if (state.audioCtx) {
-    state.audioCtx.close();
+    state.audioCtx.close().catch(() => {/* ignore close errors */});
     state.audioCtx = null;
   }
   state.isActive = false;
@@ -1195,11 +1324,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Record toggle (single button: mic ↔ stop)
   $btnRecToggle.addEventListener("click", async () => {
+    if (!state.modelReady) return; // Ignore clicks before model is loaded
     if (!state.isActive) {
       // --- Start / Resume recording ---
-      $btnRecToggle.classList.remove("mc-btn--rec");
-      $btnRecToggle.classList.add("mc-btn--stop", "recording");
-      $btnRecToggle.title = "Stop";
 
       // Keep revealedVerses, currentMushafPage, lastModelPrediction, _wordTrackedVerses
       // so the user can continue where they left off
@@ -1230,7 +1357,21 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       state.worker?.postMessage({ type: "reset" });
-      await startAudio();
+
+      // Attempt to start audio — if mic access fails, revert button state
+      try {
+        await startAudio();
+        // Only switch to stop-button state after audio starts successfully
+        $btnRecToggle.classList.remove("mc-btn--rec");
+        $btnRecToggle.classList.add("mc-btn--stop", "recording");
+        $btnRecToggle.title = "Stop";
+      } catch {
+        // startAudio already set the permission prompt;
+        // revert button to mic state so user can retry
+        $btnRecToggle.classList.remove("mc-btn--stop", "recording");
+        $btnRecToggle.classList.add("mc-btn--rec");
+        $btnRecToggle.title = "Start recitation";
+      }
     } else {
       // --- Stop recording (pause — keep state) ---
       stopAudio();
