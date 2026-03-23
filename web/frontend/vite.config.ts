@@ -62,8 +62,8 @@ export default defineConfig({
         ],
       },
       manifest: {
-        name: "Tarteel - Quran Recognition",
-        short_name: "Tarteel",
+        name: "Itqan - Quran Recognition",
+        short_name: "Itqan",
         description:
           "On-device Quran verse recognition. Recite and see your verses highlighted in real time.",
         start_url: "/",

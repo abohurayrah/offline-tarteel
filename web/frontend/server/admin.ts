@@ -8,7 +8,7 @@ const STORAGE_DIR = process.env.STORAGE_DIR || "./storage/reports";
 const DIAGNOSTICS_DIR = process.env.STORAGE_DIR
   ? join(process.env.STORAGE_DIR, "../diagnostics")
   : "./storage/diagnostics";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "tarteel-admin";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "itqan-admin";
 
 export const adminApp = new Hono();
 
