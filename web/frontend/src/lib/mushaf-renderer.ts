@@ -195,24 +195,20 @@ export function highlightWord(
     w.classList.remove("mp-word--current");
   }
 
-  // Build a "filled" set: all confirmed matched indices plus small gaps (1-2 words).
-  // This reveals words the tracker has confirmed while allowing small alignment gaps
-  // without revealing far-ahead words that matched spuriously.
+  // Build contiguous progress from word 0, allowing small gaps (1-2 words).
   const matched = new Set(matchedIndices);
   if (matched.size === 0) return;
 
-  // Find the contiguous-from-lowest: start from lowest matched index
-  // and include everything until a gap of 3+ unmatched words.
-  const sorted = [...matched].sort((a, b) => a - b);
-  let revealUpTo = sorted[0];
-  for (let i = 1; i < sorted.length; i++) {
-    const gap = sorted[i] - sorted[i - 1] - 1;
-    if (gap <= 2) {
-      // Small gap (1-2 words) — fill it, likely alignment noise
-      revealUpTo = sorted[i];
+  let revealUpTo = -1;
+  let gapCount = 0;
+  for (let i = 0; i < words.length; i++) {
+    if (matched.has(i) || words[i].classList.contains("mp-word--error")) {
+      revealUpTo = i;
+      gapCount = 0;
     } else {
-      // Large gap — stop revealing, the far word is likely spurious
-      break;
+      gapCount++;
+      if (gapCount > 2) break;
+      if (revealUpTo >= 0) revealUpTo = i;
     }
   }
 

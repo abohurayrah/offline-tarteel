@@ -409,21 +409,21 @@ function handleMushafWordProgress(msg: WordProgressMessage): void {
     }
   }
 
-  // Build progress marker: find the highest index we can reveal by following
-  // confirmed words with tolerance for small gaps (1-2 words).
-  // This prevents a spurious match on word 19 from revealing everything.
+  // Build contiguous progress from word 0 forward.
+  // Follow confirmed words, allowing small gaps (1-2 words = alignment noise).
+  // Stop at gaps of 3+ unmatched words.
   const allConfirmed = new Set([..._mushafMatchedWords, ..._mushafErrorWords]);
-  const sorted = [...allConfirmed].sort((a, b) => a - b);
   let contiguousMax = -1;
-  if (sorted.length > 0) {
-    contiguousMax = sorted[0];
-    for (let i = 1; i < sorted.length; i++) {
-      const gap = sorted[i] - sorted[i - 1] - 1;
-      if (gap <= 2) {
-        contiguousMax = sorted[i];
-      } else {
-        break;
-      }
+  let gapCount = 0;
+  for (let i = 0; i < (msg.total_words - _mushafBismillahOffset); i++) {
+    if (allConfirmed.has(i)) {
+      contiguousMax = i;
+      gapCount = 0;
+    } else {
+      gapCount++;
+      if (gapCount > 2) break; // stop at gaps of 3+
+      // Small gap — extend contiguousMax to cover it
+      if (contiguousMax >= 0) contiguousMax = i;
     }
   }
 
