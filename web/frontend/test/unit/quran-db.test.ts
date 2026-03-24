@@ -5,7 +5,7 @@ import { QuranDB, normalizeArabic, partialRatio } from "../../src/lib/quran-db.t
 describe("QuranDB construction", () => {
   it("totalVerses matches input length", () => {
     const db = getFixtureQuranDB();
-    expect(db.totalVerses).toBe(44);
+    expect(db.totalVerses).toBe(46);
   });
 
   it("populates text_norm on every verse", () => {

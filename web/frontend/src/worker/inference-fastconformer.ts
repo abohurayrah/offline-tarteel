@@ -162,7 +162,18 @@ function startForcedAlignment(surah: number, ayah: number): void {
   const verse = db?.getVerse(surah, ayah);
   if (!verse) return;
 
-  const targetText = stripUthmaniMarks(verse.text_clean || verse.text_uthmani);
+  let targetText = stripUthmaniMarks(verse.text_clean || verse.text_uthmani);
+
+  // Strip basmala from ayah 1 of surahs that have a separate basmala line.
+  // The audio for these verses doesn't include the basmala (it's recited
+  // separately), but text_clean prepends it. Without stripping, the FA
+  // stalls at word 0 waiting for "بسم" that never comes.
+  if (ayah === 1 && surah !== 1 && surah !== 9) {
+    const bsm = stripUthmaniMarks("بسم الله الرحمن الرحيم");
+    if (targetText.startsWith(bsm)) {
+      targetText = targetText.slice(bsm.length).trim();
+    }
+  }
   const blankId = decoder.blankId;
   const vocabSize = decoder.vocabSize;
 
