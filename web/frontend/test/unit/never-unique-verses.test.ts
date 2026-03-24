@@ -6,26 +6,22 @@
  * (at any starting position / prefix depth). They need boundary context
  * (the preceding verse) to resolve.
  *
- * KEY FINDING: The disambiguation hold has a short-verse exception
- * (isShortVerse2 = wordCount <= 4). For short never-unique verses like
- * bismillah (4 words) and the Ar-Rahman refrain (4 words), the system
- * intentionally does NOT hold because there is no additional text to
- * wait for. Instead, it relies on:
- *   1. The ambiguity guard (runners_up score comparison)
- *   2. Boundary context (sequential advancement from the previous verse)
- *   3. Session surah context
+ * KEY BEHAVIOR: The short-verse exception (isShortVerse2 = wordCount <= 4)
+ * does NOT apply to never-unique verses. A 4-word refrain that repeats
+ * 31 times should still be held, not emitted immediately.
  *
- * Verses with 5+ words (e.g., 2:1 "بسم الله الرحمن الرحيم الم") DO get
- * the full disambiguation hold.
+ * Without boundary context, never-unique verses are HELD regardless of
+ * word count. With boundary context (previous verse known), they resolve
+ * via sequential advancement.
  *
  * The prefix trie also affects behavior: when narrowByPrefix returns
  * <= PREFIX_NARROW_MAX_CANDIDATES (5) candidates, Phase 1 defers
  * regardless of word count. When the trie returns too many (>5),
- * Phase 1 skips and Phase 2 applies the short-verse exception.
+ * Phase 1 skips and Phase 2 applies the never-unique hold.
  *
  * Test categories:
- *   1. Bismillah (1:1) — 113 occurrences, 4 words, short-verse exception
- *   2. Ar-Rahman refrain (55:13) — 31 repeats, 4 words, short-verse exception
+ *   1. Bismillah (1:1) — 113 occurrences, 4 words, held without context
+ *   2. Ar-Rahman refrain (55:13) — 31 repeats, 4 words, held without context
  *   3. Al-Shu'ara' prophet narrative (26:107-109) — 5 identical blocks
  *   4. Muqatta'at "الم" (2:1) — 6 surahs, 5 words, full hold
  */
@@ -177,10 +173,10 @@ describe("disambiguation data integrity", () => {
 describe("Bismillah (1:1) — short-verse exception path", () => {
   const bismillahText = "بسم الله الرحمن الرحيم";
 
-  it("bismillah is 4 words and classified as a short verse (<=4)", () => {
+  it("bismillah is 4 words but never-unique so short-verse exception does not apply", () => {
     const v = fullDb.getVerse(1, 1)!;
     expect(v.text_words!.length).toBe(4);
-    // This means isShortVerse2=true, so Phase 2 hold does NOT engage
+    // neverUnique2=true overrides the short-verse exception, so Phase 2 hold DOES engage
   });
 
   it("prefix trie narrows to 113 candidates for bismillah (too many for Phase 1)", () => {
@@ -194,22 +190,21 @@ describe("Bismillah (1:1) — short-verse exception path", () => {
     expect(narrowed).toBeNull();
   });
 
-  it("emits verse_match for bismillah (short-verse exception bypasses hold)", async () => {
-    // With full DB + disambiguation, bismillah still produces verse_match
-    // because the short-verse exception (<=4 words) bypasses the Phase 2 hold.
+  it("holds bismillah without context (never-unique, no short-verse exception)", async () => {
+    // With full DB + disambiguation, bismillah is HELD because never-unique
+    // verses no longer get the short-verse exception. Without boundary context,
+    // the system cannot determine which of the 113 bismillah instances is correct.
     const transcribe = createMockTranscriber([bismillahText]);
     const tracker = new RecitationTracker(fullDb, transcribe);
 
     const msgs = await tracker.feed(discoveryAudio());
     const verseMatches = filterType(msgs, "verse_match");
 
-    // The system DOES commit because isShortVerse2=true skips the hold
-    expect(verseMatches.length).toBeGreaterThanOrEqual(1);
-    if (verseMatches.length > 0) {
-      // Should match 1:1 (Al-Fatiha) since it is the first surah
-      expect(verseMatches[0].surah).toBe(1);
-      expect(verseMatches[0].ayah).toBe(1);
-    }
+    // The system does NOT commit because neverUnique2=true overrides isShortVerse2
+    expect(verseMatches.length).toBe(0);
+    // Should get a raw_transcript instead
+    const rawTranscripts = filterType(msgs, "raw_transcript");
+    expect(rawTranscripts.length).toBeGreaterThanOrEqual(1);
   });
 
   it("ambiguity guard fires for bismillah (runners_up within 3% of top score)", async () => {
@@ -231,16 +226,18 @@ describe("Bismillah (1:1) — short-verse exception path", () => {
     }
   });
 
-  it("resolves correctly with boundary context (after 1:6 → 1:7 → next surah)", async () => {
-    const v1 = fullDb.getVerse(1, 1)!;
+  it("resolves bismillah with boundary context (start from unique 1:2, advance to 1:3)", async () => {
+    // Since 1:1 (bismillah) is now held without context, test boundary
+    // resolution by starting from a unique verse (1:2) and advancing.
     const v2 = fullDb.getVerse(1, 2)!;
+    const v3 = fullDb.getVerse(1, 3)!;
 
     const responses = [
-      v1.text_norm!, // discovery: match 1:1
-      v1.text_norm!, // tracking
-      v1.text_norm!, // grace
-      v1.text_norm!, // complete → advance to 1:2
-      v2.text_norm!, // tracking 1:2
+      v2.text_norm!, // discovery: match 1:2 (unique text)
+      v2.text_norm!, // tracking
+      v2.text_norm!, // grace
+      v2.text_norm!, // complete → advance to 1:3
+      v3.text_norm!, // tracking 1:3
     ];
     const transcribe = createSequentialTranscriber(responses);
     const tracker = new RecitationTracker(fullDb, transcribe);
@@ -256,21 +253,21 @@ describe("Bismillah (1:1) — short-verse exception path", () => {
     const verseMatches = filterType(allMsgs, "verse_match");
     const refs = verseMatches.map((m) => `${m.surah}:${m.ayah}`);
 
-    // Should match 1:1 then advance to 1:2
-    expect(refs).toContain("1:1");
+    // Should match 1:2 then advance to 1:3
     expect(refs).toContain("1:2");
+    expect(refs).toContain("1:3");
   });
 });
 
 // ==========================================================================
 // Section 2: Ar-Rahman refrain (55:13) — repeats 31 times, 4 words
 //
-// BEHAVIOR: Same as bismillah — 4 words -> short-verse exception.
+// BEHAVIOR: Never-unique verses are now held regardless of word count.
 // The trie narrows to 31 candidates (>5) so Phase 1 skips.
-// Phase 2 hold skipped because isShortVerse2=true.
-// The ambiguity guard is the last line of defense.
+// Phase 2 hold engages because neverUnique2=true overrides isShortVerse2.
+// Boundary context (previous verse known) resolves the ambiguity.
 // ==========================================================================
-describe("Ar-Rahman refrain (55:13) — short-verse exception path", () => {
+describe("Ar-Rahman refrain (55:13) — held without context, resolves with boundary", () => {
   const refrainNorm = normalizeArabic("فبأي آلاء ربكما تكذبان");
 
   it("55:13 and 55:16 have identical normalized text", () => {
@@ -279,7 +276,7 @@ describe("Ar-Rahman refrain (55:13) — short-verse exception path", () => {
     expect(v13.text_norm).toBe(v16.text_norm);
   });
 
-  it("refrain is 4 words — short-verse exception applies", () => {
+  it("refrain is 4 words but never-unique so short-verse exception does not apply", () => {
     const v = fullDb.getVerse(55, 13)!;
     expect(v.text_words!.length).toBe(4);
   });
@@ -296,18 +293,16 @@ describe("Ar-Rahman refrain (55:13) — short-verse exception path", () => {
     expect(narrowed).toBeNull();
   });
 
-  it("emits verse_match for refrain (short-verse exception bypasses hold)", async () => {
+  it("holds refrain without context (Fix 4: short-verse exception does NOT apply to never-unique)", async () => {
     const transcribe = createMockTranscriber([refrainNorm]);
     const tracker = new RecitationTracker(fullDb, transcribe);
 
     const msgs = await tracker.feed(discoveryAudio());
     const verseMatches = filterType(msgs, "verse_match");
 
-    // Short-verse exception: commits despite never-unique status
-    expect(verseMatches.length).toBeGreaterThanOrEqual(1);
-    if (verseMatches.length > 0) {
-      expect(verseMatches[0].surah).toBe(55);
-    }
+    // Fix 4: short-verse exception no longer bypasses hold for never-unique verses.
+    // A 4-word refrain that repeats 31 times should still be held without context.
+    expect(verseMatches.length).toBe(0);
   });
 
   it("resolves refrain with sequential boundary context (after 55:12)", async () => {
@@ -372,7 +367,7 @@ describe("Ar-Rahman refrain (55:13) — short-verse exception path", () => {
 //   26:107 (4 words): trie narrows to exactly 5 candidates → Phase 1 DEFERS
 //     (neverUnique + !trieUnique → prefixDeferred=true). Phase 2 skipped. HELD.
 //   26:108 (3 words): trie narrows to 8 candidates (>5) → Phase 1 skips.
-//     Phase 2: isShortVerse2=true → hold bypassed. EMITTED.
+//     Phase 2: neverUnique2=true → isShortVerse2=false (Fix 4) → HELD.
 //   26:109 (11 words): isShortVerse2=false → Phase 2 hold ENGAGES. HELD.
 // ==========================================================================
 describe("Al-Shu'ara' prophet narrative (26:107-109) disambiguation", () => {
@@ -416,7 +411,7 @@ describe("Al-Shu'ara' prophet narrative (26:107-109) disambiguation", () => {
     expect(verseMatches.length).toBe(0);
   });
 
-  it("26:108 (3 words): trie returns >5 candidates, short-verse → EMITS", async () => {
+  it("26:108 (3 words): trie returns >5 candidates, never-unique → HELD (Fix 4)", async () => {
     const v108 = fullDb.getVerse(26, 108)!;
 
     // Verify trie behavior: 8 candidates at depth 3 → too many for Phase 1
@@ -430,9 +425,10 @@ describe("Al-Shu'ara' prophet narrative (26:107-109) disambiguation", () => {
     const msgs = await tracker.feed(discoveryAudio());
     const verseMatches = filterType(msgs, "verse_match");
 
-    // Phase 1 skips (too many candidates), Phase 2 holds but isShortVerse2=true
-    // (3 words) so the hold is bypassed. Verse match IS emitted.
-    expect(verseMatches.length).toBeGreaterThanOrEqual(1);
+    // Fix 4: short-verse exception no longer bypasses hold for never-unique verses.
+    // Phase 1 skips (too many candidates), Phase 2: neverUnique2=true → isShortVerse2=false
+    // → neverUnique2 && !isShortVerse2 && !lastEmittedRef → match=null. HELD.
+    expect(verseMatches.length).toBe(0);
   });
 
   it("26:109 (11 words): Phase 2 hold engages (not short verse)", async () => {

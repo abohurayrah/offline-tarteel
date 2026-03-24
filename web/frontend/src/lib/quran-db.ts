@@ -142,6 +142,11 @@ export class QuranDB {
     }
   }
 
+  /** Whether disambiguation data (ambiguity-compact.json) has been loaded. */
+  hasDisambiguationData(): boolean {
+    return this._disambig.size > 0;
+  }
+
   /**
    * How many words from the start of this verse are needed to uniquely
    * identify it from the full corpus?  Returns -1 if the verse is never

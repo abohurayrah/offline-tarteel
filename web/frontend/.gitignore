@@ -38,3 +38,4 @@ test/benchmark-results/
 *.njsproj
 *.sln
 *.sw?
+*.onnx

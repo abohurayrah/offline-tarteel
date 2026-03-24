@@ -31,6 +31,7 @@ let vocabJson: Record<string, string> | null = null;
 // Forced alignment state (active during tracking mode)
 let faAligner: ForcedAligner | null = null;
 let faVerse: { surah: number; ayah: number } | null = null;
+let faLastProgressTime = 0;
 
 // Concurrency guard
 let busy = false;
@@ -74,8 +75,20 @@ async function transcribe(audio: Float32Array): Promise<TranscribeResult> {
 
   // Feed forced aligner if active (frame-accurate word tracking)
   if (faAligner && faVerse) {
+    // FA timeout: abort after 5s with no progress to prevent stalls
+    if (faLastProgressTime > 0 && Date.now() - faLastProgressTime > 5000) {
+      faAligner = null;
+      faVerse = null;
+    }
+  }
+  if (faAligner && faVerse) {
     try {
       const { newWords, currentWordIdx } = faAligner.processFrames(logprobs, timeSteps);
+
+      // Update FA progress timer
+      if (newWords.length > 0) {
+        faLastProgressTime = Date.now();
+      }
 
       // Only emit word_aligned for words with meaningful confidence
       for (const w of newWords) {
@@ -127,10 +140,16 @@ async function transcribe(audio: Float32Array): Promise<TranscribeResult> {
   }
 
   // Decode text (CTC greedy or constrained beam)
+  // Use greedy decoding by default — it is more accurate for short verses.
+  // Only use constrained beam search when the audio is long (>5s = >500 mel
+  // frames) because the trie gets stuck on wrong paths for short verses
+  // (e.g. 112:1 produced "قل هو الذي" instead of "قل هو الله أحد").
   let text: string;
   let rawTokens: string;
 
-  if (trie) {
+  const useConstrainedBeam = trie && timeSteps > 500;
+
+  if (useConstrainedBeam) {
     const hypotheses = decoder.constrainedBeamSearch(
       logprobs,
       timeSteps,
@@ -180,9 +199,11 @@ function startForcedAlignment(surah: number, ayah: number): void {
   try {
     faAligner = new ForcedAligner(targetText, vocabJson, blankId, vocabSize);
     faVerse = { surah, ayah };
+    faLastProgressTime = Date.now();
   } catch {
     faAligner = null;
     faVerse = null;
+    faLastProgressTime = 0;
   }
 }
 
@@ -331,6 +352,7 @@ self.onmessage = async (e: MessageEvent<WorkerInbound>) => {
     busy = false;
     faAligner = null;
     faVerse = null;
+    faLastProgressTime = 0;
     if (db) {
       tracker = new RecitationTracker(db, transcribe);
     }

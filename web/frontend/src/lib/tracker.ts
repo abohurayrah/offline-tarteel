@@ -751,11 +751,18 @@ export class RecitationTracker {
       const requiresWords = this.db.getDisambiguationLength(match.surah, match.ayah);
       const haveWords = matchText.split(" ").filter(w => w.length > 0).length;
       const matchedVerseWordCount2 = this.db.getVerse(match.surah, match.ayah)?.text_words?.length ?? 0;
-      const isShortVerse2 = matchedVerseWordCount2 <= 4;
+      // Short verse exception does NOT apply to never-unique verses —
+      // a 4-word refrain that repeats 31 times should still be held.
+      // However, only enforce this when disambiguation data is actually loaded
+      // (requiresWords === -1 when no data loaded is indistinguishable from
+      // "data loaded but verse is never-unique" — the hasDisambigData check
+      // prevents over-holding when running without the disambiguation index).
+      const hasDisambigData = this.db.hasDisambiguationData();
+      const neverUnique2 = hasDisambigData && requiresWords === -1;
+      const isShortVerse2 = matchedVerseWordCount2 <= 4 && !neverUnique2;
 
       // Never-unique verses (d=-1, e.g., 55:13 repeated 31×):
       // Only commit if we have sequential context (previous verse → boundary resolution)
-      const neverUnique2 = requiresWords === -1;
       if (neverUnique2 && !isShortVerse2 && !this.lastEmittedRef) {
         match = null;
         prefixDeferred = true;
@@ -893,6 +900,17 @@ export class RecitationTracker {
       return messages;
     }
 
+    // Short-verse patience: for surahs with many short verses (e.g. An-Nas 114),
+    // the tracker commits too early before hearing the disambiguating word.
+    // If the matched verse has <=4 words AND the transcript has <=3 words,
+    // defer for one more cycle before committing — unless we have sequential
+    // context that already disambiguates (previous verse known).
+    if (match && match.score >= effectiveThreshold && matchedVerseWordCount <= 4 &&
+        matchWords.length <= 3 && !this.hasEverMatched && match.score < 0.95) {
+      messages.push({ type: "raw_transcript", text, confidence: Math.round(match.score * 100) / 100 });
+      return messages;
+    }
+
     if (match && match.score >= effectiveThreshold) {
       const ref: [number, number] = [match.surah, match.ayah];
 
@@ -1004,6 +1022,14 @@ export class RecitationTracker {
             }
           }
         }
+      }
+
+      // Cross-surah safety: if session context exists and match is a different surah,
+      // require higher confidence to prevent false cross-surah jumps
+      if (this.sessionSurah !== null && match.surah !== this.sessionSurah && match.score < 0.85) {
+        // Don't commit — the match is likely wrong
+        messages.push({ type: "raw_transcript", text, confidence: Math.round(match.score * 100) / 100 });
+        return messages;
       }
 
       // Dedup: skip if same verse was just sent
