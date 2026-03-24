@@ -158,7 +158,7 @@ export class BPETokenizer {
  *
  * Supports incremental frame extension for streaming.
  */
-class ViterbiDP {
+export class ViterbiDP {
   private targetTokenIDs: number[];
   private blankId: number;
   private numStates: number;

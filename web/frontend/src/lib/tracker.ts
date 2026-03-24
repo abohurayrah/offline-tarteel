@@ -20,14 +20,35 @@ import {
   MIN_DISCOVERY_WORDS,
   PREFIX_NARROW_THRESHOLD,
   PREFIX_NARROW_MAX_CANDIDATES,
+  SURAH_LOCK_THRESHOLD,
+  SURAH_LOCK_MISS_LIMIT,
+  PROGRESSIVE_THRESHOLDS,
 } from "./types";
 
 export interface TranscribeResult {
   text: string;
   rawTokens: string;
+  logprobs?: Float32Array;   // raw CTC logprob matrix [timeSteps x vocabSize]
+  timeSteps?: number;
+  vocabSize?: number;
 }
 
-type TranscribeFn = (audio: Float32Array, prompt?: string) => Promise<TranscribeResult>;
+type TranscribeFn = (
+  audio: Float32Array,
+  prompt?: string,
+) => Promise<TranscribeResult>;
+
+/**
+ * CTC Viterbi verse scoring callback.
+ * Given logprobs and candidate verse indices, returns scored results
+ * sorted by score descending (best first).
+ */
+export type CTCScoreFn = (
+  logprobs: Float32Array,
+  timeSteps: number,
+  vocabSize: number,
+  candidateIndices: number[],
+) => { index: number; score: number }[];
 
 function concatFloat32(a: Float32Array, b: Float32Array): Float32Array {
   const result = new Float32Array(a.length + b.length);
@@ -204,15 +225,32 @@ export class RecitationTracker {
   private lastDeferredRef: string | null = null;
   private consecutiveDeferrals = 0;
 
+  // Discovery vote tracking: replaces consecutive-confirmation gate with
+  // a more robust voting system.  A verse accumulates votes across cycles
+  // and emits when it reaches sufficient confidence within a sliding window.
+  private discoveryVotes: Map<string, {
+    surah: number;
+    ayah: number;
+    votes: number;
+    bestScore: number;
+    firstCycle: number;
+  }> = new Map();
+  private voteCycle = 0;
+
   // Session surah context: persists across tracking resets to prevent surah-level misidentification
   private sessionSurah: number | null = null;
+  // Surah-lock miss counter: if surah-locked search misses N times in a row,
+  // release the lock (user probably switched surahs)
+  private surahLockMisses = 0;
 
   private db: QuranDB;
   private transcribe: TranscribeFn;
+  private ctcScore: CTCScoreFn | null;
 
-  constructor(db: QuranDB, transcribe: TranscribeFn) {
+  constructor(db: QuranDB, transcribe: TranscribeFn, ctcScore?: CTCScoreFn) {
     this.db = db;
     this.transcribe = transcribe;
+    this.ctcScore = ctcScore ?? null;
   }
 
   async feed(samples: Float32Array): Promise<WorkerOutbound[]> {
@@ -587,7 +625,8 @@ export class RecitationTracker {
     }
 
     // Transcribe and normalize Arabic
-    const { text: rawText } = await this.transcribe(this.fullAudio.slice());
+    const transcribeResult = await this.transcribe(this.fullAudio.slice());
+    const { text: rawText, logprobs: ctcLogprobs, timeSteps: ctcTimeSteps, vocabSize: ctcVocabSize } = transcribeResult;
     const text = normalizeArabic(rawText);
     if (!text || text.trim().length < 5) return messages;
 
@@ -637,6 +676,45 @@ export class RecitationTracker {
       : text;
 
     // -----------------------------------------------------------------------
+    // Phase 0 — Surah-locked search (cross-surah false positive prevention)
+    //
+    // When sessionSurah is established (user has been reading a specific
+    // surah), search within that surah + immediate neighbors first.  This
+    // searches ~300 verses max instead of 6,236, drastically reducing
+    // cross-surah false positives (e.g. reading surah 1, jumping to surah 37
+    // because a partial transcript matches).
+    //
+    // If surah-locked search misses SURAH_LOCK_MISS_LIMIT times in a row,
+    // release the lock (user probably switched surahs) and fall through to
+    // Phase 1 / Phase 2.
+    // -----------------------------------------------------------------------
+    let match: VerseMatch | null = null;
+    let viaPrefix = false;
+
+    if (this.sessionSurah !== null) {
+      const surahMatch = this.db.matchVerseInSurah(
+        matchText,
+        this.sessionSurah,
+        SURAH_LOCK_THRESHOLD,
+        this.lastEmittedRef,
+      );
+      if (surahMatch && surahMatch.score >= SURAH_LOCK_THRESHOLD) {
+        match = surahMatch;
+        viaPrefix = false; // came through surah-lock, not prefix
+        this.surahLockMisses = 0;
+        // Skip Phase 1 and Phase 2
+      } else {
+        // Surah-locked search missed
+        this.surahLockMisses++;
+        if (this.surahLockMisses >= SURAH_LOCK_MISS_LIMIT) {
+          // Release the lock — user probably switched surahs
+          this.sessionSurah = null;
+          this.surahLockMisses = 0;
+        }
+      }
+    }
+
+    // -----------------------------------------------------------------------
     // Phase 1 — Prefix-narrowing (paper algorithm, low latency path)
     //
     // Use the first N recognized words to walk the QuranDB word-prefix trie.
@@ -650,15 +728,13 @@ export class RecitationTracker {
     // too noisy / candidate set too large), we fall back to the original
     // matchVerse path below.
     // -----------------------------------------------------------------------
-    let match: VerseMatch | null = null;
-    let viaPrefix = false;
     // Set to true when Phase 1 explicitly found a candidate but determined
     // we need more audio before emitting (disambiguation hold).
     // When true, Phase 2 is SKIPPED to prevent the full-corpus search from
     // overriding the Phase 1 hold with an incorrect premature match.
     let prefixDeferred = false;
 
-    {
+    if (!match) {
       const normWords = matchText.split(" ").filter(w => w.length > 0);
       // Use first 8 words for narrowing (paper: 89.4% unique within 6 words;
       // use 8 for margin when the first 6 are still ambiguous)
@@ -674,39 +750,121 @@ export class RecitationTracker {
             PREFIX_NARROW_MAX_CANDIDATES,
           );
           if (narrowed && narrowed.length > 0 && narrowed.length <= PREFIX_NARROW_MAX_CANDIDATES) {
-            const prefixMatch = this.db.matchVerseFromCandidates(
-              matchText,
-              narrowed,
-              PREFIX_NARROW_THRESHOLD,
-              this.lastEmittedRef,
-            );
-            if (prefixMatch) {
-              // Disambiguation-aware hold: the paper tells us exactly how many
-              // words are needed from the start of this verse to uniquely
-              // identify it.  If we have fewer words than that, the current
-              // winner may change once more audio arrives — defer.
-              //
-              // Exception: if the narrowed set has exactly 1 candidate, the
-              // trie itself has already disambiguated (no hold needed).
-              const requiresWords = this.db.getDisambiguationLength(prefixMatch.surah, prefixMatch.ayah);
-              const haveWords = normWords.length;
-              const trieUnique = narrowed.length === 1;
+            // ── Phase 1b: CTC Viterbi direct verse scoring ──────────
+            // When logprobs are available and we have a small candidate
+            // set, score verses directly against the raw CTC logprob
+            // matrix using Viterbi DP.  This replaces fuzzy text matching
+            // with an acoustic score — more accurate, no text-decoding errors.
+            const hasLogprobs = this.ctcScore && ctcLogprobs && ctcTimeSteps && ctcVocabSize;
 
-              // requiresWords === -1 means the verse is NEVER uniquely identifiable
-              // in isolation (e.g., 55:13 repeats 31 times). Hold unless we have
-              // sequential context (previous verse known).
-              const neverUnique = requiresWords === -1;
-              const needsMoreWords = requiresWords > 0 && haveWords < requiresWords;
-              if (!trieUnique && (neverUnique || needsMoreWords)) {
-                // Don't emit yet — accumulate more audio and re-try.
-                // Mark as deferred so Phase 2 doesn't override this hold.
-                prefixDeferred = true;
+            if (hasLogprobs && narrowed.length > 1) {
+              const viterbiResults = this.ctcScore!(
+                ctcLogprobs!, ctcTimeSteps!, ctcVocabSize!, narrowed,
+              );
+
+              if (viterbiResults.length > 0) {
+                const bestViterbi = viterbiResults[0];
+                // Require a minimum Viterbi score to trust the result.
+                // Scores below 0.01 indicate the audio doesn't match any
+                // candidate well (likely noise or wrong surah).
+                if (bestViterbi.score >= 0.01) {
+                  const bestIdx = bestViterbi.index;
+                  const bestVerse = this.db.verses[bestIdx];
+                  if (bestVerse) {
+                    // Inline continuation bonus: reward sequential verses
+                    let bonus = 0;
+                    if (this.lastEmittedRef) {
+                      const [pS, pA] = this.lastEmittedRef;
+                      if (bestVerse.surah === pS && bestVerse.ayah === pA + 1) bonus = 0.22;
+                      else if (bestVerse.surah === pS && bestVerse.ayah === pA + 2) bonus = 0.12;
+                      else if (bestVerse.surah === pS && bestVerse.ayah === pA + 3) bonus = 0.06;
+                    }
+                    const viterbiScore = Math.min(bestViterbi.score + bonus, 1.0);
+
+                    // Disambiguation hold — same logic as text-based path
+                    const requiresWords = this.db.getDisambiguationLength(bestVerse.surah, bestVerse.ayah);
+                    const haveWords = normWords.length;
+                    const trieUnique = narrowed.length === 1;
+                    const neverUnique = requiresWords === -1;
+                    const needsMoreWords = requiresWords > 0 && haveWords < requiresWords;
+
+                    if (!trieUnique && (neverUnique || needsMoreWords)) {
+                      prefixDeferred = true;
+                      break;
+                    }
+
+                    // Build runners-up from Viterbi results
+                    const runnersUp = viterbiResults.slice(0, 5).map((r) => {
+                      const v = this.db.verses[r.index];
+                      let b = 0;
+                      if (this.lastEmittedRef) {
+                        const [pS2, pA2] = this.lastEmittedRef;
+                        if (v.surah === pS2 && v.ayah === pA2 + 1) b = 0.22;
+                        else if (v.surah === pS2 && v.ayah === pA2 + 2) b = 0.12;
+                        else if (v.surah === pS2 && v.ayah === pA2 + 3) b = 0.06;
+                      }
+                      return {
+                        surah: v.surah,
+                        ayah: v.ayah,
+                        raw_score: Math.round(r.score * 1000) / 1000,
+                        bonus: Math.round(b * 1000) / 1000,
+                        score: Math.round(Math.min(r.score + b, 1.0) * 1000) / 1000,
+                        text_norm: (v.text_norm ?? "").slice(0, 60),
+                        surah_name: v.surah_name,
+                        surah_name_en: v.surah_name_en,
+                        text_uthmani: v.text_uthmani.slice(0, 80),
+                      };
+                    });
+
+                    match = {
+                      surah: bestVerse.surah,
+                      ayah: bestVerse.ayah,
+                      text: bestVerse.text_uthmani,
+                      text_uthmani: bestVerse.text_uthmani,
+                      text_clean: bestVerse.text_clean,
+                      text_norm: bestVerse.text_norm,
+                      text_norm_ns: bestVerse.text_norm_ns,
+                      text_norm_no_bsm: bestVerse.text_norm_no_bsm,
+                      text_norm_no_bsm_ns: bestVerse.text_norm_no_bsm_ns,
+                      text_words: bestVerse.text_words,
+                      surah_name: bestVerse.surah_name,
+                      surah_name_en: bestVerse.surah_name_en,
+                      score: viterbiScore,
+                      raw_score: bestViterbi.score,
+                      bonus,
+                      runners_up: runnersUp,
+                    };
+                    viaPrefix = true;
+                    break;
+                  }
+                }
+              }
+            }
+
+            // Fallback: text-based scoring (Levenshtein) when logprobs
+            // are not available or Viterbi didn't produce a match
+            if (!match) {
+              const prefixMatch = this.db.matchVerseFromCandidates(
+                matchText,
+                narrowed,
+                PREFIX_NARROW_THRESHOLD,
+                this.lastEmittedRef,
+              );
+              if (prefixMatch) {
+                const requiresWords = this.db.getDisambiguationLength(prefixMatch.surah, prefixMatch.ayah);
+                const haveWords = normWords.length;
+                const trieUnique = narrowed.length === 1;
+                const neverUnique = requiresWords === -1;
+                const needsMoreWords = requiresWords > 0 && haveWords < requiresWords;
+                if (!trieUnique && (neverUnique || needsMoreWords)) {
+                  prefixDeferred = true;
+                  break;
+                }
+
+                match = prefixMatch as VerseMatch;
+                viaPrefix = true;
                 break;
               }
-
-              match = prefixMatch as VerseMatch;
-              viaPrefix = true;
-              break;
             }
           }
         }
@@ -801,11 +959,35 @@ export class RecitationTracker {
       }
     }
 
-    // Anti-cascade: shortly after an emit, require higher threshold for
-    // non-continuation jumps to prevent false positives from cascading
-    let effectiveThreshold = this.hasEverMatched
-      ? VERSE_MATCH_THRESHOLD
-      : FIRST_MATCH_THRESHOLD;
+    // Progressive confidence: use audio duration to set threshold.
+    // The model is 100% accurate with full audio but noisy on short clips.
+    // Early cycles need very high confidence; later cycles relax.
+    const audioSeconds = this.fullAudio.length / SAMPLE_RATE;
+    let effectiveThreshold: number;
+    {
+      const pts = PROGRESSIVE_THRESHOLDS;
+      if (audioSeconds <= pts[0][0]) {
+        effectiveThreshold = pts[0][1];
+      } else if (audioSeconds >= pts[pts.length - 1][0]) {
+        effectiveThreshold = pts[pts.length - 1][1];
+      } else {
+        // Linear interpolation between breakpoints
+        let lo = pts[0], hi = pts[pts.length - 1];
+        for (let i = 0; i < pts.length - 1; i++) {
+          if (audioSeconds >= pts[i][0] && audioSeconds < pts[i + 1][0]) {
+            lo = pts[i];
+            hi = pts[i + 1];
+            break;
+          }
+        }
+        const t = (audioSeconds - lo[0]) / (hi[0] - lo[0]);
+        effectiveThreshold = lo[1] + t * (hi[1] - lo[1]);
+      }
+    }
+    // After first match, use the standard threshold (session is warm)
+    if (this.hasEverMatched) {
+      effectiveThreshold = Math.min(effectiveThreshold, VERSE_MATCH_THRESHOLD);
+    }
 
     // When the match came via prefix-narrowing (paper algorithm), the
     // candidate set was already pre-filtered to <= PREFIX_NARROW_MAX_CANDIDATES
@@ -911,8 +1093,90 @@ export class RecitationTracker {
       return messages;
     }
 
+    // -----------------------------------------------------------------------
+    // Multi-hypothesis voting gate
+    //
+    // Instead of requiring N consecutive cycles matching the same verse
+    // (which fails with volatile CTC output: A, B, A never gets 2
+    // consecutive), we accumulate votes in a sliding window.  A verse
+    // can be emitted when it reaches sufficient votes within the last
+    // VOTE_WINDOW_SIZE cycles.
+    // -----------------------------------------------------------------------
+    if (match && match.score >= RAW_TRANSCRIPT_THRESHOLD) {
+      const voteKey = `${match.surah}:${match.ayah}`;
+      this.voteCycle++;
+
+      // Update vote for the winning candidate
+      const existing = this.discoveryVotes.get(voteKey);
+      if (existing) {
+        existing.votes++;
+        existing.bestScore = Math.max(existing.bestScore, match.score);
+      } else {
+        this.discoveryVotes.set(voteKey, {
+          surah: match.surah,
+          ayah: match.ayah,
+          votes: 1,
+          bestScore: match.score,
+          firstCycle: this.voteCycle,
+        });
+      }
+
+      // Count runner-up appearances as fractional votes (0.5)
+      if (match.runners_up) {
+        for (const ru of match.runners_up.slice(0, 3)) {
+          const ruKey = `${ru.surah}:${ru.ayah}`;
+          const ruEntry = this.discoveryVotes.get(ruKey);
+          if (ruEntry) {
+            ruEntry.votes += 0.5;
+            ruEntry.bestScore = Math.max(ruEntry.bestScore, ru.score);
+          }
+        }
+      }
+
+      // Prune old votes (only keep last 5 cycles)
+      for (const [k, v] of this.discoveryVotes) {
+        if (this.voteCycle - v.firstCycle > 5) {
+          this.discoveryVotes.delete(k);
+        }
+      }
+    }
+
     if (match && match.score >= effectiveThreshold) {
       const ref: [number, number] = [match.surah, match.ayah];
+
+      // Check voting gate: does this verse have enough votes to emit?
+      const voteKey = `${match.surah}:${match.ayah}`;
+      const voteEntry = this.discoveryVotes.get(voteKey);
+      const voteCount = voteEntry?.votes ?? 0;
+      const voteBestScore = voteEntry?.bestScore ?? match.score;
+
+      // Determine if this is a sequential continuation from the last emitted verse
+      const isVoteContinuation = this.lastEmittedRef !== null &&
+        match.surah === this.lastEmittedRef[0] &&
+        match.ayah >= this.lastEmittedRef[1] + 1 &&
+        match.ayah <= this.lastEmittedRef[1] + 3;
+
+      // Emit conditions — any one is sufficient:
+      //   1. Multiple votes: verse accumulated >= 2 votes in the window
+      //   2. High confidence: single-cycle score >= 0.75
+      //   3. Sequential continuation: next verse in same surah
+      //   4. Prefix-narrowed unique: trie resolved to single candidate
+      // The voting gate is intentionally lenient — its purpose is to catch
+      // oscillating false positives (A, B, A), not to block good matches.
+      const shouldEmitByVotes =
+        voteCount >= 2 ||
+        match.score >= 0.75 ||
+        isVoteContinuation ||
+        (viaPrefix && match.score >= PREFIX_NARROW_THRESHOLD);
+
+      if (!shouldEmitByVotes) {
+        messages.push({
+          type: "raw_transcript",
+          text,
+          confidence: Math.round(match.score * 100) / 100,
+        });
+        return messages;
+      }
 
       // Ambiguity guard: only suppress when scores are nearly identical
       // and the transcript hasn't clearly differentiated the verses.
@@ -1067,9 +1331,14 @@ export class RecitationTracker {
       this.accumulatedText = "";
       this.accumulatedCycles = 0;
 
+      // Reset voting state on verse emit — new verse starts fresh
+      this.discoveryVotes.clear();
+      this.voteCycle = 0;
+
       // Update session surah context (or switch if confident enough)
       if (match.score >= 0.75 || this.sessionSurah === null) {
         this.sessionSurah = match.surah;
+        this.surahLockMisses = 0;
       }
 
       // For multi-verse spans, advance hint to the last verse
@@ -1175,6 +1444,70 @@ export class RecitationTracker {
     }
   }
 
+  /**
+   * Force a final inference on whatever audio is buffered.
+   * Call this when the audio stream ends (e.g., end of clip, user stopped).
+   * Uses the SAME approach as non-streaming: full audio → transcribe → match
+   * with a low threshold (0.25). This gives non-streaming quality at verse
+   * boundaries / end of utterance.
+   */
+  async flush(): Promise<WorkerOutbound[]> {
+    if (this.fullAudio.length < SAMPLE_RATE * 0.5) return [];
+    if (this.trackingVerse !== null) return []; // already tracking
+
+    const messages: WorkerOutbound[] = [];
+
+    // Transcribe the FULL audio buffer (like non-streaming)
+    const { text: rawText } = await this.transcribe(this.fullAudio.slice());
+    const text = normalizeArabic(rawText);
+    if (!text || text.trim().length < 3) return messages;
+
+    // Match with LOW threshold — same as non-streaming benchmark (0.25)
+    const match = this.db.matchVerse(
+      text,
+      RAW_TRANSCRIPT_THRESHOLD, // 0.25
+      4,
+      this.lastEmittedRef,
+      10,
+      this.sessionSurah,
+    );
+
+    if (match && match.score >= RAW_TRANSCRIPT_THRESHOLD) {
+      const ref: [number, number] = [match.surah, match.ayah];
+
+      // Dedup
+      if (this.lastEmittedRef &&
+          this.lastEmittedRef[0] === ref[0] &&
+          this.lastEmittedRef[1] === ref[1]) {
+        return messages;
+      }
+
+      const verse = this.db.getVerse(match.surah, match.ayah);
+      const surrounding = getSurroundingVerses(this.db, match.surah, match.ayah);
+
+      messages.push({
+        type: "verse_match",
+        surah: match.surah,
+        ayah: match.ayah,
+        verse_text: verse?.text_uthmani ?? "",
+        surah_name: verse?.surah_name ?? "",
+        confidence: Math.round(match.score * 100) / 100,
+        surrounding_verses: surrounding,
+      });
+
+      this.hasEverMatched = true;
+      this.sessionSurah = match.surah;
+      this.prevEmittedRef = this.lastEmittedRef;
+      this.prevEmittedText = this.lastEmittedText;
+      this.lastEmittedRef = ref;
+      this.lastEmittedText = match.text_norm ?? verse?.text_norm ?? "";
+
+      if (verse) this._enterTracking(verse);
+    }
+
+    return messages;
+  }
+
   private _exitTracking(reason: string): void {
     const verseLen = this.trackingVerseWords.length;
     const progress =
@@ -1220,5 +1553,8 @@ export class RecitationTracker {
     this.accumulatedCycles = 0;
     this._longVerseMode = false;
     this._longVerseModeCycles = 0;
+    // Reset voting state when returning to discovery after tracking
+    this.discoveryVotes.clear();
+    this.voteCycle = 0;
   }
 }

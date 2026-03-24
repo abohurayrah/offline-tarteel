@@ -27,9 +27,11 @@ import { computeMelSpectrogram } from "../src/worker/mel.ts";
 import { CTCDecoder } from "../src/worker/ctc-decode.ts";
 import { QuranDB } from "../src/lib/quran-db.ts";
 import { RecitationTracker } from "../src/lib/tracker.ts";
-import type { TranscribeResult } from "../src/lib/tracker.ts";
+import type { TranscribeResult, CTCScoreFn } from "../src/lib/tracker.ts";
 import type { WorkerOutbound } from "../src/lib/types.ts";
 import { SAMPLE_RATE } from "../src/lib/types.ts";
+import { CTCVerseScorer } from "../src/worker/ctc-verse-scorer.ts";
+import { BPETokenizer } from "../src/worker/forced-alignment.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
@@ -45,6 +47,7 @@ const CHUNK_SAMPLES = Math.floor(SAMPLE_RATE * CHUNK_MS / 1000);
 let session: ort.InferenceSession;
 let decoder: CTCDecoder;
 let db: QuranDB;
+let ctcScoreFn: CTCScoreFn | undefined;
 
 async function init() {
   console.log("Loading model...");
@@ -52,8 +55,10 @@ async function init() {
     resolve(ROOT, "public/fastconformer_ar_ctc_q8.onnx"),
     { executionProviders: ["cpu"] },
   );
-  decoder = new CTCDecoder(JSON.parse(readFileSync(resolve(ROOT, "public/vocab.json"), "utf-8")));
-  db = new QuranDB(JSON.parse(readFileSync(resolve(ROOT, "public/quran.json"), "utf-8")));
+  const vocabJson = JSON.parse(readFileSync(resolve(ROOT, "public/vocab.json"), "utf-8"));
+  decoder = new CTCDecoder(vocabJson);
+  const quranData = JSON.parse(readFileSync(resolve(ROOT, "public/quran.json"), "utf-8"));
+  db = new QuranDB(quranData);
 
   // Load disambiguation map for prefix-narrowing (mirrors the worker init path)
   const disambigPath = resolve(ROOT, "public/ambiguity-compact.json");
@@ -63,6 +68,38 @@ async function init() {
     console.log("Disambiguation map loaded.");
   } else {
     console.warn("ambiguity-compact.json not found; prefix-narrowing disabled.");
+  }
+
+  // Set up CTC Viterbi verse scorer
+  try {
+    const tokenizer = new BPETokenizer(vocabJson);
+    const scorer = new CTCVerseScorer(tokenizer, decoder.blankId);
+
+    // Pre-tokenize all verses
+    const verses = db.getAllVerses();
+    let tokenized = 0;
+    for (const v of verses) {
+      const text = v.text_clean || v.text_uthmani;
+      if (text) {
+        v.bpe_token_ids = scorer.tokenizeVerse(text);
+        tokenized++;
+      }
+    }
+    console.log(`Pre-tokenized ${tokenized} verses for Viterbi scoring.`);
+
+    // Build the scoring callback
+    ctcScoreFn = (logprobs, timeSteps, vocabSize, candidateIndices) => {
+      const candidates = candidateIndices.map(idx => {
+        const v = verses[idx];
+        return { index: idx, tokenIds: v?.bpe_token_ids ?? [] };
+      }).filter(c => c.tokenIds.length > 0);
+
+      if (!candidates.length) return [];
+      return scorer.scoreVerses(logprobs, timeSteps, vocabSize, candidates);
+    };
+    console.log("CTC Viterbi scorer ready.");
+  } catch (e: any) {
+    console.warn(`Viterbi scorer setup failed: ${e.message}. Falling back to text matching.`);
   }
 
   console.log("Ready.\n");
@@ -88,8 +125,9 @@ async function transcribe(audio: Float32Array): Promise<TranscribeResult> {
   });
   const out = results[session.outputNames[0]];
   const [, ts, vs] = out.dims as number[];
-  const { text, rawTokens } = decoder.decode(out.data as Float32Array, ts, vs);
-  return { text, rawTokens };
+  const logprobs = out.data as Float32Array;
+  const { text, rawTokens } = decoder.decode(logprobs, ts, vs);
+  return { text, rawTokens, logprobs, timeSteps: ts, vocabSize: vs };
 }
 
 // ─── Streaming simulation ───────────────────────────────────────────────────
@@ -122,7 +160,7 @@ async function simulateStreaming(
   expectedAyah: number,
   id: string,
 ): Promise<StreamingResult> {
-  const tracker = new RecitationTracker(db, transcribe);
+  const tracker = new RecitationTracker(db, transcribe, ctcScoreFn);
   const allMessages: WorkerOutbound[] = [];
   const t0 = performance.now();
 
@@ -162,6 +200,25 @@ async function simulateStreaming(
         for (const idx of msg.matched_indices) {
           wordIndices.add(idx);
         }
+      }
+    }
+  }
+
+  // End-of-utterance flush: give the tracker one final chance to match
+  // with ALL accumulated audio (essentially non-streaming accuracy)
+  if (!firstMatch) {
+    const flushMsgs = await tracker.flush();
+    for (const msg of flushMsgs) {
+      allMessages.push(msg);
+      if (msg.type === "verse_match" && !firstMatch) {
+        firstMatch = {
+          surah: msg.surah,
+          ayah: msg.ayah,
+          confidence: msg.confidence,
+          time: audio.length / SAMPLE_RATE,
+        };
+        lastSurah = msg.surah;
+        lastAyah = msg.ayah;
       }
     }
   }

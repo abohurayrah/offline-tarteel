@@ -10,11 +10,12 @@
 import { computeMelSpectrogram } from "./mel";
 import { CTCDecoder } from "./ctc-decode";
 import { QuranTrie } from "./quran-trie";
-import { stripUthmaniMarks, ForcedAligner } from "./forced-alignment";
+import { stripUthmaniMarks, BPETokenizer, ForcedAligner } from "./forced-alignment";
 import type { WordAlignment } from "./forced-alignment";
+import { CTCVerseScorer } from "./ctc-verse-scorer";
 import { QuranDB } from "../lib/quran-db";
 import { RecitationTracker } from "../lib/tracker";
-import type { TranscribeResult } from "../lib/tracker";
+import type { TranscribeResult, CTCScoreFn } from "../lib/tracker";
 import type { WorkerInbound, WorkerOutbound } from "../lib/types";
 import { SAMPLE_RATE } from "../lib/types";
 import * as ort from "onnxruntime-web/wasm";
@@ -27,6 +28,8 @@ let session: ort.InferenceSession | null = null;
 let decoder: CTCDecoder | null = null;
 let trie: QuranTrie | null = null;
 let vocabJson: Record<string, string> | null = null;
+let verseScorer: CTCVerseScorer | null = null;
+let ctcScoreCallback: CTCScoreFn | undefined;
 
 // Forced alignment state (active during tracking mode)
 let faAligner: ForcedAligner | null = null;
@@ -171,7 +174,7 @@ async function transcribe(audio: Float32Array): Promise<TranscribeResult> {
     rawTokens = greedy.rawTokens;
   }
 
-  return { text, rawTokens };
+  return { text, rawTokens, logprobs, timeSteps, vocabSize };
 }
 
 // ─── Forced alignment control ───────────────────────────────────────────────
@@ -320,7 +323,47 @@ async function init() {
       ayah: v.ayah,
     }));
     trie.buildFromVerses(trieVerses);
-    post({ type: "loading", percent: 85 });
+    post({ type: "loading", percent: 80 });
+
+    // ── CTC Viterbi verse scorer: pre-tokenize all 6,236 verses ──────────
+    // This enables direct acoustic scoring of verse candidates against the
+    // raw CTC logprob matrix, bypassing text decoding + Levenshtein distance.
+    post({ type: "loading_status", message: "Pre-tokenizing verses for Viterbi scoring..." });
+    const bpeTokenizer = new BPETokenizer(vocabData);
+    verseScorer = new CTCVerseScorer(bpeTokenizer, decoder.blankId);
+
+    // Pre-tokenize each verse and store token IDs on the QuranVerse object
+    for (const verse of db.verses) {
+      const verseText = stripUthmaniMarks(verse.text_clean || verse.text_uthmani);
+      verse.bpe_token_ids = verseScorer.tokenizeVerse(verseText);
+    }
+    post({ type: "loading", percent: 90 });
+
+    // Build the CTC scoring callback for the tracker.
+    // This closure captures the verseScorer and db references.
+    // Stored at module level so the reset handler can reuse it.
+    ctcScoreCallback = (
+      logprobs: Float32Array,
+      timeSteps: number,
+      vocabSize: number,
+      candidateIndices: number[],
+    ) => {
+      if (!verseScorer || !db) return [];
+
+      // Build candidates from pre-tokenized verse data
+      const candidates = candidateIndices
+        .filter((idx) => idx >= 0 && idx < db!.verses.length)
+        .map((idx) => ({
+          index: idx,
+          tokenIds: db!.verses[idx].bpe_token_ids ?? [],
+        }))
+        .filter((c) => c.tokenIds.length > 0);
+
+      if (candidates.length === 0) return [];
+
+      return verseScorer.scoreVerses(logprobs, timeSteps, vocabSize, candidates)
+        .map((r) => ({ index: r.index, score: r.score }));
+    };
 
     // Warm up — first inference is slow due to WASM compilation
     post({ type: "loading_status", message: "Warming up model..." });
@@ -331,8 +374,8 @@ async function init() {
     await transcribe(warmupAudio);
     post({ type: "loading", percent: 100 });
 
-    // Create tracker
-    tracker = new RecitationTracker(db, transcribe);
+    // Create tracker with CTC Viterbi scoring callback
+    tracker = new RecitationTracker(db, transcribe, ctcScoreCallback);
     post({ type: "ready" });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -354,7 +397,7 @@ self.onmessage = async (e: MessageEvent<WorkerInbound>) => {
     faVerse = null;
     faLastProgressTime = 0;
     if (db) {
-      tracker = new RecitationTracker(db, transcribe);
+      tracker = new RecitationTracker(db, transcribe, ctcScoreCallback);
     }
   } else if (msg.type === "audio") {
     await processAudio(msg.samples);

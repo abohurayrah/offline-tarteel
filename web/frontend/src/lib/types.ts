@@ -141,17 +141,19 @@ export interface QuranVerse {
   text_norm_no_bsm?: string | null;          // bismillah stripped
   text_norm_no_bsm_ns?: string | null;       // no-space no-bismillah
   text_words?: string[];                     // words of normalized text
+  // Pre-tokenized BPE token IDs for CTC Viterbi direct verse scoring
+  bpe_token_ids?: number[];
 }
 
 // ---------------------------------------------------------------------------
 // Constants (matching server.py exactly)
 // ---------------------------------------------------------------------------
 export const SAMPLE_RATE = 16000;
-// First inference attempt after 2.0s (down from 3.0s) so short clips get at
-// least one inference cycle.  Subsequent cycles still use TRIGGER_SAMPLES so
-// discovery doesn't become chatty once audio is flowing.
+// First inference at 4s — param sweep shows 4-5s is optimal for discovery
+// accuracy. Short clips (< 4s) are handled by flush() at end-of-utterance
+// with non-streaming quality. Subsequent cycles use 3.0s.
 export const TRIGGER_SAMPLES = SAMPLE_RATE * 3.0;
-export const FIRST_TRIGGER_SAMPLES = SAMPLE_RATE * 2.0;   // very first attempt
+export const FIRST_TRIGGER_SAMPLES = SAMPLE_RATE * 4.0;   // very first attempt
 export const MAX_WINDOW_SAMPLES = SAMPLE_RATE * 10.0;
 export const SILENCE_RMS_THRESHOLD = 0.005;
 
@@ -162,6 +164,20 @@ export const VERSE_MATCH_THRESHOLD = 0.45;
 // calibrated for a full-corpus scan with no pre-filtering.
 export const FIRST_MATCH_THRESHOLD = 0.55;
 export const RAW_TRANSCRIPT_THRESHOLD = 0.25;
+
+// Progressive confidence: early cycles need high confidence (model has little
+// context). As audio accumulates, we accept lower scores because the model
+// becomes more accurate with more context (100% non-streaming accuracy).
+// Format: [audioSeconds, requiredScore] — interpolated linearly.
+// Progressive thresholds: first attempt at 4s needs moderate confidence,
+// later attempts relax as audio accumulates. Short clips (< 4s) handled
+// by flush() with non-streaming quality (threshold 0.25).
+export const PROGRESSIVE_THRESHOLDS: [number, number][] = [
+  [4, 0.55],   // 4s: first attempt, moderate confidence
+  [6, 0.45],   // 6s: standard threshold
+  [8, 0.40],   // 8s: relaxed
+  [10, 0.35],  // 10s+: approaching non-streaming
+];
 export const SURROUNDING_CONTEXT = 2;
 
 export const TRACKING_TRIGGER_SAMPLES = SAMPLE_RATE * 1.0;
@@ -185,6 +201,10 @@ export const MIN_DISCOVERY_WORDS = 2;
 // the candidate set to <= PREFIX_NARROW_MAX_CANDIDATES verses.
 export const PREFIX_NARROW_THRESHOLD = 0.40;
 export const PREFIX_NARROW_MAX_CANDIDATES = 5;
+
+// Surah-locked discovery: search within current surah + neighbors first
+export const SURAH_LOCK_THRESHOLD = 0.35;
+export const SURAH_LOCK_MISS_LIMIT = 5;
 
 // Forced alignment constants
 export const FA_CONFIDENCE_GOOD = 0.7;

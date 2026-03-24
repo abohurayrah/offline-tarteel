@@ -93,6 +93,8 @@ export class QuranDB {
   private _byRef: Map<string, QuranVerse> = new Map();
   private _bySurah: Map<number, QuranVerse[]> = new Map();
   private _trigramIndex: Map<string, number[]> = new Map();
+  // Surah number -> array of verse indices (positions in this.verses[])
+  private _surahIndices: Map<number, number[]> = new Map();
 
   // --- new disambiguation / prefix-narrowing state ---
   private _disambig: Map<string, DisambiguationEntry> = new Map();
@@ -126,6 +128,13 @@ export class QuranDB {
       const arr = this._bySurah.get(v.surah) ?? [];
       arr.push(v);
       this._bySurah.set(v.surah, arr);
+    }
+    // Build surah -> verse index map (used by matchVerseInSurah)
+    for (let idx = 0; idx < this.verses.length; idx++) {
+      const s = this.verses[idx].surah;
+      const idxArr = this._surahIndices.get(s) ?? [];
+      idxArr.push(idx);
+      this._surahIndices.set(s, idxArr);
     }
     this._buildTrigramIndex();
     this._buildPrefixIndex();
@@ -408,6 +417,41 @@ export class QuranDB {
     };
   }
 
+  /**
+   * Surah-locked search: only score verses in the given surah and its
+   * immediate neighbors (surah-1, surah+1).  This searches ~300 verses
+   * max instead of the full 6,236 corpus, preventing cross-surah false
+   * positives when the user's session surah is established.
+   *
+   * Delegates to matchVerseFromCandidates once the candidate indices
+   * have been collected.
+   */
+  matchVerseInSurah(
+    text: string,
+    surah: number,
+    threshold: number,
+    hint?: [number, number] | null,
+  ): VerseMatch | null {
+    const candidateIndices: number[] = [];
+
+    // Collect verse indices for surah-1, surah, surah+1
+    for (let s = Math.max(1, surah - 1); s <= Math.min(114, surah + 1); s++) {
+      const indices = this._surahIndices.get(s);
+      if (indices) candidateIndices.push(...indices);
+    }
+
+    if (candidateIndices.length === 0) return null;
+
+    const result = this.matchVerseFromCandidates(
+      text,
+      candidateIndices,
+      threshold,
+      hint ?? null,
+    );
+
+    return result as VerseMatch | null;
+  }
+
   private _buildTrigramIndex(): void {
     for (let idx = 0; idx < this.verses.length; idx++) {
       const v = this.verses[idx];
@@ -475,6 +519,10 @@ export class QuranDB {
 
   getSurah(surah: number): QuranVerse[] {
     return this._bySurah.get(surah) ?? [];
+  }
+
+  getAllVerses(): QuranVerse[] {
+    return this.verses;
   }
 
   getNextVerse(surah: number, ayah: number): QuranVerse | undefined {
