@@ -165,6 +165,7 @@ async function simulateStreaming(
   const t0 = performance.now();
 
   let firstMatch: { surah: number; ayah: number; confidence: number; time: number } | null = null;
+  let lastMatch: { surah: number; ayah: number; confidence: number; time: number } | null = null;
   let wordIndices = new Set<number>();
   let totalWords = 0;
   let jumps = 0;
@@ -188,6 +189,13 @@ async function simulateStreaming(
             time: (offset + chunk.length) / SAMPLE_RATE,
           };
         }
+        // Always track last match for self-correction analysis
+        lastMatch = {
+          surah: msg.surah,
+          ayah: msg.ayah,
+          confidence: msg.confidence,
+          time: (offset + chunk.length) / SAMPLE_RATE,
+        };
         if (lastSurah >= 0 && (msg.surah !== lastSurah || msg.ayah !== lastAyah)) {
           jumps++;
         }
@@ -235,6 +243,7 @@ async function simulateStreaming(
     firstMatchConfidence: firstMatch?.confidence ?? 0,
     firstMatchTime: firstMatch?.time ?? audioDuration,
     discoveryCorrect: firstMatch?.surah === expectedSurah && firstMatch?.ayah === expectedAyah,
+    lastMatchCorrect: (lastMatch ?? firstMatch)?.surah === expectedSurah && (lastMatch ?? firstMatch)?.ayah === expectedAyah,
     wordsCovered: wordIndices.size,
     totalWords,
     wordCoverage: totalWords > 0 ? wordIndices.size / totalWords : 0,
@@ -357,8 +366,10 @@ async function main() {
   console.log(`\n${"═".repeat(70)}`);
   console.log(`  STREAMING BENCHMARK RESULTS`);
   console.log(`${"═".repeat(70)}`);
-  console.log(`  Discovery accuracy: ${correct}/${total} (${(correct / total * 100).toFixed(1)}%)`);
-  console.log(`  No match:           ${noMatch}`);
+  const lastCorrect = results.filter((r: any) => r.lastMatchCorrect).length;
+  console.log(`  First-match accuracy: ${correct}/${total} (${(correct / total * 100).toFixed(1)}%)`);
+  console.log(`  Last-match accuracy:  ${lastCorrect}/${total} (${(lastCorrect / total * 100).toFixed(1)}%)`);
+  console.log(`  No match:             ${noMatch}`);
   console.log(`  Avg word coverage:  ${(avgCoverage * 100).toFixed(1)}%`);
   console.log(`  Avg time to match:  ${avgTime.toFixed(1)}s`);
   console.log(`  Avg verse jumps:    ${avgJumps.toFixed(2)}`);
